@@ -468,9 +468,11 @@ Instead, use:
 - Plain text emphasis using CAPS if needed
 - Clear spacing between sections
 
-If relevant study materials are provided, use them as the primary source of information.
+CRITICAL: Only mention "study materials" if the user message explicitly includes context from their materials (indicated by a "Based on the student's study materials:" section). If no such context is provided, you are answering from general knowledge - do NOT claim or imply you are using their study materials.
 
-IMPORTANT: When answering questions based on general knowledge (not from study materials), include relevant sources and a YouTube video at the end of your response in this format:
+If relevant study materials are provided in the context, use them as the primary source of information.
+
+When answering from general knowledge (not from study materials), include relevant sources and a YouTube video at the end of your response in this format:
 
 Sources:
 1. https://example.com - Brief description
