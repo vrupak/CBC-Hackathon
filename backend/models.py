@@ -44,6 +44,9 @@ class Module(Base):
     is_downloaded = Column(Boolean, default=False) # Status of local file download
     is_ingested = Column(Boolean, default=False)   # Status of RAG ingestion
     
+    # --- NEW: Study Path Persistence ---
+    study_path_json = Column(String, nullable=True) # Stores the generated path (large JSON string)
+    
     # Relationship to Course
     course = relationship("Course", back_populates="modules")
 

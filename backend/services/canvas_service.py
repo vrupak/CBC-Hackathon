@@ -12,6 +12,7 @@ env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 # --- Configuration ---
+# Use the environment variable if present, otherwise default to the generic URL.
 CANVAS_API_URL = os.getenv("CANVAS_API_URL", "https://canvas.instructure.com/api/v1")
 
 
@@ -32,7 +33,11 @@ class CanvasService:
         }
         # httpx client is initialized with the base_url
         self.client = httpx.AsyncClient(headers=self.headers, base_url=self.base_url, timeout=30.0)
-    
+        
+        # --- ADDED DEBUGGING LINE ---
+        print(f"[DEBUG] CanvasService initialized with Base URL: {self.base_url}")
+
+
     async def get_user_courses(self) -> List[Dict[str, Any]]:
         """
         Fetches the user's current course enrollments from the Canvas API.
@@ -50,7 +55,6 @@ class CanvasService:
     async def get_course_files(
         self, 
         canvas_course_id: str, 
-        # file_types: Optional[List[str]] = None  # Removed to test without file type filter
     ) -> List[Dict[str, Any]]:
         """
         Fetches the list of files for a specific Canvas course ID.
@@ -58,26 +62,12 @@ class CanvasService:
         endpoint = f"/courses/{canvas_course_id}/files"
         
         params = {
-            "per_page": 5000, 
+            # --- FIX: Changed 5000 to a safe maximum of 100 ---
+            "per_page": 100, 
             "sort": "filename", 
         }
         
-        # --- CONDITIONAL FILTERING ---
-        # NOTE: Temporarily commented out file type filtering based on user feedback
-        # if file_types is None:
-        #     # Expanded list to cover common study materials, including images and archives
-        #     file_types = [
-        #         "pdf", "doc", "docx", "pptx", "txt", "rtf", 
-        #         "xls", "xlsx", "csv", 
-        #         "jpg", "jpeg", "png", "gif", 
-        #         "zip", "rar", "7z",
-        #         "html", "htm", "xml", "json" # Add web/code formats
-        #     ] 
-        
-        # params["content_types"] = file_types
-        # print(f"[INFO] Fetching files for course {canvas_course_id} using types: {file_types}")
-
-        print(f"[INFO] Fetching ALL files for course {canvas_course_id} (No file type filter applied).")
+        print(f"[INFO] Fetching ALL files for course {canvas_course_id} (per_page: 100).")
         
         response = await self.client.get(endpoint, params=params)
         
@@ -87,7 +77,6 @@ class CanvasService:
         
         # Post-filter: Canvas file list may contain folders or files without a download URL.
         # We only want files that have a URL to download (i.e., not a folder and not a hidden resource).
-        # This filter is essential and must remain.
         downloadable_files = [f for f in raw_files if f.get('url')]
         
         total_raw_files = len(raw_files)
@@ -107,7 +96,7 @@ class CanvasService:
         async with httpx.AsyncClient(headers=self.headers, timeout=120.0) as download_client:
             print(f"[INFO] Starting download from: {file_url} to {save_path}")
             
-            # --- FIX: Use client.stream() context manager instead of stream=True in get() ---
+            # --- FIX: Use client.stream() context manager instead of stream=True in get() ---\
             async with download_client.stream("GET", file_url, follow_redirects=True) as response:
                 response.raise_for_status()
 

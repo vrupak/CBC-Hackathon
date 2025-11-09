@@ -87,9 +87,10 @@ class DBService:
                 if module.name != new_name or module.file_url != new_url:
                     module.name = new_name
                     module.file_url = new_url
-                    # Reset download/ingestion status if the file URL has changed
+                    # Reset status if the file URL/name has changed
                     module.is_downloaded = False
                     module.is_ingested = False
+                    module.study_path_json = None # <--- RESET PATH ON FILE CHANGE
                 # Do not commit yet, wait for the bulk commit
                 synced_count += 1
             else:
@@ -119,6 +120,7 @@ class DBService:
             module.is_downloaded = is_downloaded
             # If download status changes, recompute progress
             self.recompute_course_progress(db, module.course_id)
+            db.commit()
             return True
         return False
     
@@ -130,8 +132,27 @@ class DBService:
             module.is_ingested = is_ingested
             # If ingestion status changes, recompute progress
             self.recompute_course_progress(db, module.course_id)
+            db.commit()
             return True
         return False
+        
+    # --- NEW: Set study path JSON for a module ---
+    def update_module_study_path(self, db, module_id: int, path_json: str):
+        """Stores the generated study path JSON string in the module record."""
+        module = db.query(Module).filter_by(id=module_id).first()
+        if module:
+            module.study_path_json = path_json
+            db.commit()
+            return True
+        return False
+        
+    # --- NEW: Get study path JSON for a module ---
+    def get_module_study_path(self, db, module_id: int):
+        """Retrieves the study path JSON string from the module record."""
+        module = db.query(Module).filter_by(id=module_id).first()
+        if module:
+            return module.study_path_json
+        return None
 
 
     def recompute_course_progress(self, db, course_id: int):

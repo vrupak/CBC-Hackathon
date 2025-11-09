@@ -42,6 +42,8 @@ export interface LocalModule {
   file_url: string | null;
   is_downloaded: boolean;
   is_ingested: boolean;
+  // --- NEW: Front-end status for path generation ---
+  has_study_path?: boolean; 
 }
 
 export interface LocalCourse {
@@ -294,7 +296,8 @@ export const addSelectedCanvasCourses = async (canvas_course_ids: string[]): Pro
  */
 export const getCourseModules = async (localCourseId: number): Promise<{ modules: LocalModule[], courseName: string, courseId: number, canvasId: string }> => {
   const response = await axios.get(`${API_BASE_URL}/courses/${localCourseId}/modules`);
-  return response.data; // Expects { modules: LocalModule[], courseName: string, courseId: number, canvasId: string }
+  // Note: LocalModule now includes 'has_study_path' to simplify the logic on the frontend
+  return response.data; 
 };
 
 /**
@@ -319,4 +322,22 @@ export const downloadModuleFile = async (localModuleId: number): Promise<{ messa
 export const ingestModuleFile = async (localModuleId: number): Promise<{ message: string, supermemory_response: any }> => {
   const response = await axios.post(`${API_BASE_URL}/canvas/modules/${localModuleId}/ingest`);
   return response.data;
+};
+
+/**
+ * Triggers topic extraction for an ingested module file (Path Generation).
+ */
+export const generateTopics = async (localModuleId: number): Promise<{ topics: string, filename: string, source: string }> => {
+    const response = await axios.post(`${API_BASE_URL}/llm/modules/${localModuleId}/generate-topics`);
+    // 'topics' contains the raw Claude JSON string
+    return response.data;
+};
+
+/**
+ * Retrieves the persisted study path for a module (used after refresh).
+ */
+export const retrieveTopics = async (localModuleId: number): Promise<{ topics: string, filename: string, source: string }> => {
+    // This endpoint should return the same structure as generateTopics but fetch from the DB
+    const response = await axios.get(`${API_BASE_URL}/llm/modules/${localModuleId}/study-path`);
+    return response.data;
 };
