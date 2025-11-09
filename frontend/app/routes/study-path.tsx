@@ -107,19 +107,12 @@ export default function StudyPath() {
 
         if (completedCount === totalCount) {
           newStatus = 'completed';
-          // Find the next topic and set it to 'in-progress'
-          const nextTopicIndex = topics.findIndex(t => t.id === topicId) + 1;
-          if (nextTopicIndex < topics.length) {
-            setTopics(prevTopics => prevTopics.map((t, index) => {
-              if (index === nextTopicIndex && t.status === 'pending') {
-                return { ...t, status: 'in-progress' };
-              }
-              return t;
-            }));
-          }
+          // NOTE: The logic to auto-start the NEXT topic is removed to support non-sequential learning.
+          // The status update logic remains to correctly show the current topic's progress.
         } else if (completedCount > 0) {
           newStatus = 'in-progress';
         } else {
+          // If all subtopics are unchecked, set status back to 'pending'
           newStatus = 'pending';
         }
         
@@ -132,6 +125,7 @@ export default function StudyPath() {
       return topic;
     });
 
+    // Update the current set of topics 
     setTopics(newTopics);
     
     // Persist the updated topics to session storage
@@ -281,8 +275,11 @@ export default function StudyPath() {
                   ? Math.round((completedSubtopic / totalSubtopic) * 100)
                   : 0;
               
-              // Check if the topic is currently active (in-progress or completed)
-              const isTopicActive = topic.status !== 'pending';
+              // ------------------------------------
+              // 🚀 FIX: Unrestricted Activation Logic
+              // Set isTopicActive to TRUE so all topics can be interacted with immediately.
+              // ------------------------------------
+              const isTopicActive = true; 
 
               return (
                 <div
@@ -292,8 +289,6 @@ export default function StudyPath() {
                   <button
                     onClick={() => toggleTopic(topic.id)}
                     className="w-full p-6 text-left focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl"
-                    // 🛑 FIX: REMOVED THE disabled PROP TO ALLOW EXPANSION 🛑
-                    // disabled={topic.status === 'pending' && index !== 0} 
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-4 flex-1">
@@ -353,11 +348,10 @@ export default function StudyPath() {
                         {topic.subtopics.map((subtopic) => (
                           <label
                             key={subtopic.id}
-                            // Apply a disabled style if the topic is not active
-                            className={`flex items-center space-x-3 p-3 rounded-lg cursor-pointer transition-colors ${
-                                isTopicActive
-                                    ? "hover:bg-gray-50 dark:hover:bg-gray-700/50"
-                                    : "opacity-60 cursor-default"
+                            // Opacity styling is now based on whether the topic is 'pending' 
+                            // as a visual cue, but the functionality remains enabled.
+                            className={`flex items-center space-x-3 p-3 rounded-lg cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50 ${
+                                topic.status === 'pending' ? "opacity-90" : ""
                             }`}
                           >
                             <input
@@ -366,8 +360,7 @@ export default function StudyPath() {
                               onChange={() =>
                                 toggleSubtopic(topic.id, subtopic.id)
                               }
-                              // 🛑 FIX: Disabled the checkbox if the topic is pending 🛑
-                              disabled={!isTopicActive} 
+                              // DISABLED PROP IS REMOVED ENTIRELY 
                               className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
                             />
                             <span
@@ -379,8 +372,7 @@ export default function StudyPath() {
                             >
                               {subtopic.title}
                             </span>
-                            {/* Disable the Study button too */}
-                            {(!subtopic.completed && isTopicActive) && (
+                            {(!subtopic.completed) && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
