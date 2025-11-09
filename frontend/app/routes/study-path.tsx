@@ -1,7 +1,8 @@
 import type { Route } from "./+types/study-path";
 import { Layout } from "../components/Layout";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "react-router";
+import { saveStudyProgress } from "../utils/api";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -67,24 +68,59 @@ const loadTopicsFromSession = (): Topic[] => {
 
 export default function StudyPath() {
   const location = useLocation();
-  
+
   // 1. Get initial topics from navigation state or session storage
-  const initialTopicsFromState = (location.state as { topics?: Topic[] })?.topics;
-  
-  const initialTopics: Topic[] = initialTopicsFromState 
-    ? initialTopicsFromState 
+  const initialTopicsFromState = (location.state as any)?.topics;
+
+  const initialTopics: Topic[] = initialTopicsFromState && Array.isArray(initialTopicsFromState) && initialTopicsFromState.length > 0
+    ? initialTopicsFromState
     : loadTopicsFromSession();
-    
+
   // Also retrieve the filename for display
-  const filename = (location.state as { filename?: string })?.filename || (
-    typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('filename') : "Uploaded Material"
+  const filename = (location.state as any)?.filename || (
+    typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('filename') : null
   ) || "Uploaded Material";
 
   const [topics, setTopics] = useState(initialTopics);
   // Default to expanding the first active topic
   const [expandedTopic, setExpandedTopic] = useState<number | null>(
-    topics.length > 0 && topics[0].id !== 0 ? topics[0].id : null
+    topics && topics.length > 0 && topics[0] && topics[0].id !== 0 ? topics[0].id : null
   );
+
+  // Get file ID from session storage
+  const fileId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('uploadedFileId') : null;
+
+  // Auto-save progress to Supermemory whenever topics change
+  useEffect(() => {
+    const saveProgress = async () => {
+      if (!fileId || !filename) return;
+
+      try {
+        const totalSubtopics = topics.reduce((acc, topic) => acc + topic.subtopics.length, 0);
+        const completedSubtopics = topics.reduce(
+          (acc, topic) => acc + topic.subtopics.filter(st => st.completed).length,
+          0
+        );
+        const overallProgress = totalSubtopics > 0 ? (completedSubtopics / totalSubtopics) * 100 : 0;
+
+        await saveStudyProgress({
+          file_id: fileId,
+          filename: filename,
+          topics: topics,
+          overall_progress: overallProgress,
+          last_updated: new Date().toISOString(),
+        });
+
+        console.log('[StudyPath] Progress saved to Supermemory');
+      } catch (error) {
+        console.error('[StudyPath] Failed to save progress:', error);
+      }
+    };
+
+    // Debounce the save to avoid too many requests
+    const timer = setTimeout(saveProgress, 1000);
+    return () => clearTimeout(timer);
+  }, [topics, fileId, filename]);
 
   const toggleTopic = (topicId: number) => {
     setExpandedTopic(expandedTopic === topicId ? null : topicId);
@@ -269,9 +305,10 @@ export default function StudyPath() {
         </div>
 
         {/* Topics List */}
-        {topics.length > 0 && topics[0].id !== 0 && topics[0].title !== "Loading..." ? (
+        {topics && topics.length > 0 ? (
           <div className="space-y-4">
             {topics.map((topic, index) => {
+              if (!topic || topic.id === 0 || topic.title === "Loading..." || topic.title === "No Topics Found") return null;
               const completedSubtopic = topic.subtopics.filter(
                 (st) => st.completed
               ).length;
@@ -280,7 +317,7 @@ export default function StudyPath() {
                 totalSubtopic > 0
                   ? Math.round((completedSubtopic / totalSubtopic) * 100)
                   : 0;
-              
+
               // Check if the topic is currently active (in-progress or completed)
               const isTopicActive = topic.status !== 'pending';
 
@@ -403,10 +440,10 @@ export default function StudyPath() {
         ) : (
           <div className="text-center p-12 bg-white dark:bg-gray-800 rounded-xl shadow-lg">
              <p className="text-xl font-semibold text-gray-700 dark:text-gray-300">
-                {topics[0].title === "Loading..." ? "Loading Study Path..." : "No Study Path Available."}
+                {topics && topics[0] && topics[0].title === "Loading..." ? "Loading Study Path..." : "No Study Path Available."}
             </p>
             <p className="text-gray-500 dark:text-gray-400 mt-2">
-                {topics[0].description}
+                {topics && topics[0] && topics[0].description ? topics[0].description : "Please upload study materials to get started."}
             </p>
           </div>
         )}

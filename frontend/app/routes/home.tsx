@@ -139,19 +139,30 @@ export default function Home() {
       if (response.topics_extracted && response.topics) {
         // 2. Parse the raw topics string from the backend
         structuredTopics = parseClaudeTopics(response.topics);
-        
-        // 3. Store the structured topics in sessionStorage (good for refresh/direct navigation)
-        // --- FIX: Check for client environment before writing to sessionStorage ---
-        if (typeof sessionStorage !== 'undefined') {
-          sessionStorage.setItem('uploadedFileId', response.file_id);
-          sessionStorage.setItem('extractedTopicsJson', JSON.stringify(structuredTopics));
-          sessionStorage.setItem('filename', response.filename);
-        }
-      } else {
-        // Handle case where topics extraction failed
-        setUploadError(response.topics_error || "File uploaded, but topic extraction failed.");
-        setIsUploading(false);
-        return; // Stop here if we can't get topics
+      } else if (!response.topics_extracted) {
+        // Topics extraction failed - create placeholder topics from the filename
+        console.warn("Topic extraction not available. Creating placeholder topics.");
+        structuredTopics = [{
+          id: 1,
+          title: response.filename.replace(/\.[^/.]+$/, ""), // Remove file extension
+          description: "Topics to be extracted",
+          subtopics: [{ id: 1, title: "Content pending extraction" }],
+          status: 'in-progress' as const,
+        }];
+      }
+
+      // 3. Store the structured topics in sessionStorage (good for refresh/direct navigation)
+      // --- FIX: Check for client environment before writing to sessionStorage ---
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('uploadedFileId', response.file_id);
+        sessionStorage.setItem('current_file_id', response.file_id); // For chat context
+        sessionStorage.setItem('extractedTopicsJson', JSON.stringify(structuredTopics));
+        sessionStorage.setItem('filename', response.filename);
+      }
+
+      // Show warning if topics extraction failed, but still allow navigation
+      if (!response.topics_extracted && response.topics_error) {
+        console.warn("Topics extraction warning:", response.topics_error);
       }
 
       setUploadSuccess(true);

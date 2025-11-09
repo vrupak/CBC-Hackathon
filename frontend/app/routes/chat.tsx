@@ -1,6 +1,8 @@
 import type { Route } from "./+types/chat";
 import { Layout } from "../components/Layout";
 import { useState, useRef, useEffect } from "react";
+import { flushSync } from "react-dom";
+import { streamChatMessage, type ChatMessage as APIChatMessage } from "../utils/api";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -38,8 +40,22 @@ export default function Chat() {
   ]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [fileId, setFileId] = useState<string | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load file_id from sessionStorage after hydration (client-side only)
+  useEffect(() => {
+    setIsHydrated(true);
+    if (typeof sessionStorage !== "undefined") {
+      const storedFileId = sessionStorage.getItem("current_file_id");
+      if (storedFileId) {
+        setFileId(storedFileId);
+        console.log(`[Chat] Loaded file_id from sessionStorage: ${storedFileId}`);
+      }
+    }
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -63,17 +79,99 @@ export default function Chat() {
     setInputValue("");
     setIsLoading(true);
 
-    // Simulate AI response (replace with actual API call later)
-    setTimeout(() => {
-      const aiMessage: Message = {
-        id: messages.length + 2,
-        text: `I understand you're asking about "${text}". In a real implementation, this would be an AI-generated response based on your study materials. The response would be contextual, detailed, and tailored to your understanding level.`,
+    const aiMessageId = messages.length + 2;
+    let fullText = "";
+
+    try {
+      // Build conversation history for context (convert to API format)
+      const conversationHistory: APIChatMessage[] = messages
+        .filter((msg) => msg.id !== 1) // Skip the initial greeting
+        .map((msg) => ({
+          role: msg.sender === "user" ? "user" : "assistant",
+          content: msg.text,
+        }));
+
+      // Add placeholder message for streaming
+      setMessages((prev) => [...prev, {
+        id: aiMessageId,
+        text: "",
         sender: "ai",
         timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, aiMessage]);
+      }]);
+
+      // Stream the response with forced synchronous updates
+      const stream = streamChatMessage(text.trim(), conversationHistory, fileId || undefined);
+      let buffer = "";
+      let updateCount = 0;
+
+      for await (const chunk of stream) {
+        if (chunk.metadata) {
+          // Log metadata but don't display it
+          console.log("[STREAM] Metadata:", chunk.metadata);
+        } else if (chunk.text) {
+          fullText += chunk.text;
+          buffer += chunk.text;
+
+          // Update UI more frequently - every 3 characters OR on newline OR every 5 chunks
+          updateCount++;
+          if (buffer.length > 3 || chunk.text.includes("\n") || updateCount % 5 === 0) {
+            // Use flushSync to force immediate DOM update (no React batching)
+            flushSync(() => {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === aiMessageId
+                    ? { ...msg, text: fullText }
+                    : msg
+                )
+              );
+            });
+            // Scroll to latest message immediately
+            scrollToBottom();
+            buffer = "";
+          }
+        } else if (chunk.done) {
+          // Stream completed - final update
+          console.log("[STREAM] Complete");
+          flushSync(() => {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === aiMessageId
+                  ? { ...msg, text: fullText }
+                  : msg
+              )
+            );
+          });
+          scrollToBottom();
+          break;
+        } else if (chunk.error) {
+          console.error("[STREAM] Error:", chunk.error);
+          throw new Error(chunk.error);
+        }
+      }
+
+      // Ensure message is updated one final time
+      if (fullText) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === aiMessageId
+              ? { ...msg, text: fullText }
+              : msg
+          )
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to send message. Please try again.";
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === aiMessageId
+            ? { ...msg, text: `Sorry, I encountered an error: ${errorMessage}` }
+            : msg
+        )
+      );
+      console.error("Chat error:", error);
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {

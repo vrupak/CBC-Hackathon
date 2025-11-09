@@ -8,9 +8,9 @@ from typing import Optional, List, Dict, Any
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
-# Load .env from root directory (parent of backend/)
-# __file__ is in backend/services/, so go up 2 levels to reach root
-env_path = Path(__file__).parent.parent.parent / ".env"
+# Load .env from backend directory
+# __file__ is in backend/services/, so go up 1 level to reach backend/
+env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
