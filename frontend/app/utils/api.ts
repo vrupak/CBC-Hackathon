@@ -74,7 +74,6 @@ export async function uploadMaterial(file: File): Promise<UploadResponse> {
   return response.data;
 }
 
-<<<<<<< HEAD
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
