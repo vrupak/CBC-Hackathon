@@ -341,28 +341,10 @@ export default function Chat() {
                       </div>
                     )}
                     <div className="flex-1">
-                      {/* Show badges for AI messages - removed amber warning badge */}
-                      {message.sender === "ai" && (
+                      {/* Show badges for AI messages */}
+                      {message.sender === "ai" && message.id !== 1 && (
                         <div className="flex flex-wrap gap-2 mb-2">
-                          {message.usedWebSearch && (
-                            <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-md text-xs font-medium">
-                              <svg
-                                className="w-3 h-3"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                                />
-                              </svg>
-                              Web search used
-                            </div>
-                          )}
-                          {message.contextUsed && (
+                          {message.contextUsed ? (
                             <div className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-md text-xs font-medium">
                               <svg
                                 className="w-3 h-3"
@@ -378,6 +360,23 @@ export default function Chat() {
                                 />
                               </svg>
                               Using study materials
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-1 px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-md text-xs font-medium">
+                              <svg
+                                className="w-3 h-3"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                                />
+                              </svg>
+                              {message.usedWebSearch ? "Answer from web search" : "Answer from general knowledge"}
                             </div>
                           )}
                         </div>
