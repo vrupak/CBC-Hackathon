@@ -249,7 +249,7 @@ async def generate_module_topics(
     db: DBSession
 ):
     db_service = get_db_service()
-    supermemory_service = get_supermemory_service()
+    # No longer need SupermemoryService for this endpoint
     claude_service = get_claude_service()
     
     if not claude_service:
@@ -266,6 +266,7 @@ async def generate_module_topics(
     course = module.course
         
     if not module.is_ingested:
+        # This check implies the file is also downloaded, which is correct for the flow
         raise HTTPException(
             status_code=400, 
             detail="File has not been ingested into Supermemory yet. Please ingest the file first."
@@ -284,28 +285,45 @@ async def generate_module_topics(
         )
 
     try:
-        # 2. Generate RAG Query
-        # We query for the module and course name, which are stored in the metadata.
-        # This will retrieve all chunks associated with this specific document.
-        rag_query = f"{module.name} {course.name}"
+        # --- START OF FIX ---
         
-        # 3. Call Claude with RAG context
-        logger.info(f"Generating topics for module {local_module_id} using Claude + RAG...")
+        # 2. Construct the local file path (same as the /ingest endpoint)
+        course_folder_name = sanitize_path_name(course.name)
+        local_file_path = DOWNLOAD_BASE_DIR / course_folder_name / module.name
         
-        llm_response = await claude_service.extract_topics_with_rag(
-            query=rag_query,
-            supermemory_service=supermemory_service
+        if not local_file_path.exists():
+             raise HTTPException(
+                status_code=404, 
+                detail=f"Local file not found at expected path: {local_file_path}. Please try downloading again."
+            )
+
+        # 3. Extract the text content directly from the file
+        logger.info(f"Extracting text from: {local_file_path} for topic generation...")
+        document_content = await extract_text_from_file(local_file_path)
+        
+        if not document_content:
+             raise Exception("Extracted document content was empty.")
+        
+        # 4. Call Claude with the *full document content*, not RAG
+        logger.info(f"Generating topics for module {local_module_id} using Claude (full text)...")
+        
+        # Use the correct service method that takes full content
+        llm_response = await claude_service.extract_topics(
+            document_content=document_content
+            # No supermemory_context is passed, so it uses the full text
         )
+        
+        # --- END OF FIX ---
         
         raw_topics_json_string = llm_response.get("topics_text")
         
         if not raw_topics_json_string:
             raise Exception("LLM returned no topics content.")
 
-        # 4. Save the raw JSON string to the database
+        # 5. Save the raw JSON string to the database
         db_service.update_module_study_path(db, local_module_id, raw_topics_json_string)
 
-        # 5. Return the raw JSON string to the frontend
+        # 6. Return the raw JSON string to the frontend
         return JSONResponse(
             status_code=200,
             content={
