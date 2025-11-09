@@ -424,9 +424,10 @@ async def chat_stream(message: dict):
                                 for item in search_results["data"]
                             ])
 
-                    # Only consider context "found" if it's substantial (>= 100 chars)
+                    # Only consider context "found" if it's substantial (>= 500 chars)
                     # This prevents showing "Using study materials" for brief/irrelevant matches
-                    MIN_CONTEXT_LENGTH = 100
+                    # from tangentially related documents or stored conversations
+                    MIN_CONTEXT_LENGTH = 500
 
                     if supermemory_context and len(supermemory_context.strip()) >= MIN_CONTEXT_LENGTH:
                         print(f"[INFO] Found Supermemory context: {len(supermemory_context)} characters")
