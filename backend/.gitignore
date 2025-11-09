@@ -8,6 +8,7 @@ venv/
 ENV/
 .venv
 uploads/
+download/
 *.db
 *.sqlite
 .env

@@ -149,17 +149,27 @@ JSON Schema:
         """
         try:
             # Get relevant context from Supermemory
-            rag_context = await supermemory_service.query(query, limit=5)
-            
+            print(f"[DEBUG] Querying Supermemory with: {query}")
+            rag_context = await supermemory_service.query(query, limit=5, container_tag="uploaded-documents")
+
+            print(f"[DEBUG] RAG response: {rag_context}")
+
             # Extract context text from RAG results
             context_text = ""
             if isinstance(rag_context, dict):
                 # Handle different possible response structures
                 if "results" in rag_context:
-                    context_text = "\n\n".join([
-                        str(result.get("content", result.get("text", ""))) 
-                        for result in rag_context["results"]
-                    ])
+                    # Each result has a 'chunks' array with content
+                    for result in rag_context["results"]:
+                        if "chunks" in result and isinstance(result["chunks"], list):
+                            for chunk in result["chunks"]:
+                                if "content" in chunk:
+                                    context_text += str(chunk["content"]) + "\n\n"
+                        # Fallback: try to get content directly from result
+                        elif "content" in result:
+                            context_text += str(result["content"]) + "\n\n"
+                        elif "text" in result:
+                            context_text += str(result["text"]) + "\n\n"
                 elif "content" in rag_context:
                     context_text = str(rag_context["content"])
                 elif "data" in rag_context:
@@ -167,11 +177,21 @@ JSON Schema:
                     data = rag_context["data"]
                     if isinstance(data, list):
                         context_text = "\n\n".join([
-                            str(item.get("content", item.get("text", ""))) 
+                            str(item.get("content", item.get("text", "")))
                             for item in data
                         ])
                     elif isinstance(data, dict) and "content" in data:
                         context_text = str(data["content"])
+
+            print(f"[DEBUG] Extracted context length: {len(context_text)} characters")
+
+            # Check if we got any context
+            if not context_text or len(context_text.strip()) == 0:
+                raise Exception(
+                    f"No context retrieved from Supermemory for query: '{query}'. "
+                    "The document may still be processing, or it may not have been ingested properly. "
+                    "Please wait a few moments and try again."
+                )
 
             # Build prompt using RAG context and the JSON schema
             # Pass document_content as empty string since RAG context is separate
