@@ -14,6 +14,7 @@ from services.supermemory_service import SupermemoryService
 from services.claude_service import ClaudeService 
 from services.db_service import DBService 
 from services.canvas_service import CanvasService 
+from utils.file_processor import extract_text_from_file # CORRECTED IMPORT PATH
 from models import init_db, SessionLocal, Course, Module, DB_PATH # DB_PATH imported
 
 # Set up logging
@@ -448,10 +449,99 @@ async def download_module_file(
         db_service.update_module_download_status(db, local_module_id, is_downloaded=False)
         raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
-        error_msg = f"An unexpected error occurred during file download: {str(e)}"
+        error_msg = f"An unexpected error occurred during file download: {str(e)}: {e}"
         logger.error(f"File download failed for module {local_module_id}: {e}")
         # If download fails, ensure status is False
         db_service.update_module_download_status(db, local_module_id, is_downloaded=False)
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+# --- NEW: Endpoint to ingest a specific module file into Supermemory ---
+@app.post("/api/canvas/modules/{local_module_id}/ingest")
+async def ingest_module_file(
+    local_module_id: int,
+    db: DBSession
+):
+    db_service = get_db_service()
+    supermemory_service = get_supermemory_service()
+    
+    if not supermemory_service:
+        raise HTTPException(
+            status_code=503,
+            detail="Supermemory service is not configured. Please check SUPERMEMORY_API_KEY."
+        )
+    
+    # 1. Retrieve the module and course details from the database
+    module = db.query(Module).filter_by(id=local_module_id).first()
+    if not module:
+        raise HTTPException(status_code=404, detail=f"Module with ID {local_module_id} not found.")
+
+    course = module.course
+    if not course:
+        raise HTTPException(status_code=500, detail="Associated course not found for this module.")
+        
+    if not module.is_downloaded:
+        raise HTTPException(
+            status_code=400, 
+            detail="File has not been downloaded yet. Please download the file first."
+        )
+    
+    if module.is_ingested:
+        return JSONResponse(
+            status_code=200,
+            content={"message": f"File '{module.name}' is already ingested into Supermemory."}
+        )
+
+    # 2. Determine the local path
+    course_folder_name = sanitize_path_name(course.name)
+    local_file_path = DOWNLOAD_BASE_DIR / course_folder_name / module.name
+    
+    if not local_file_path.exists():
+         raise HTTPException(
+            status_code=404, 
+            detail=f"Local file not found at expected path: {local_file_path}. Please try downloading again."
+        )
+
+    try:
+        # 3. Extract text content from the local file
+        logger.info(f"Extracting text from: {local_file_path}")
+        document_content = await extract_text_from_file(local_file_path)
+        
+        if not document_content:
+             raise Exception("Extracted document content was empty.")
+
+        # 4. Ingest document into Supermemory
+        metadata = {
+            "course_name": course.name,
+            "canvas_course_id": course.canvas_id,
+            "module_name": module.name,
+            "canvas_file_id": module.canvas_file_id,
+            "local_module_id": local_module_id
+        }
+        
+        logger.info(f"Ingesting {module.name} into Supermemory...")
+        ingestion_response = await supermemory_service.ingest_document(
+            content=document_content,
+            filename=module.name,
+            metadata=metadata
+        )
+
+        # 5. Update the database status
+        db_service.update_module_ingestion_status(db, local_module_id, is_ingested=True)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "message": f"Successfully ingested '{module.name}' for course '{course.name}' into Supermemory.",
+                "supermemory_response": ingestion_response
+            }
+        )
+
+    except Exception as e:
+        error_msg = f"An unexpected error occurred during file ingestion: {str(e)}"
+        logger.error(f"File ingestion failed for module {local_module_id}: {e}")
+        # If ingestion fails, ensure status is False
+        db_service.update_module_ingestion_status(db, local_module_id, is_ingested=False)
         raise HTTPException(status_code=500, detail=error_msg)
 
 

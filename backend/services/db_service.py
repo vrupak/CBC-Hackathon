@@ -117,7 +117,19 @@ class DBService:
         module = db.query(Module).filter_by(id=module_id).first()
         if module:
             module.is_downloaded = is_downloaded
-            db.commit()
+            # If download status changes, recompute progress
+            self.recompute_course_progress(db, module.course_id)
+            return True
+        return False
+    
+    # --- NEW: Update ingestion status for a module ---
+    def update_module_ingestion_status(self, db, module_id: int, is_ingested: bool):
+        """Updates the ingestion (Supermemory) status for a specific module."""
+        module = db.query(Module).filter_by(id=module_id).first()
+        if module:
+            module.is_ingested = is_ingested
+            # If ingestion status changes, recompute progress
+            self.recompute_course_progress(db, module.course_id)
             return True
         return False
 
