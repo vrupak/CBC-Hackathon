@@ -43,6 +43,14 @@ class DBService:
             db.commit()
             db.refresh(course)
         return course
+    
+    def get_all_canvas_ids(self, db) -> set[str]:
+        """Returns a set of all canvas_id strings currently stored locally."""
+        # Use query(Course.canvas_id) to efficiently select only the IDs
+        # filter(Course.canvas_id.isnot(None)) ensures we only get Canvas-linked courses
+        results = db.query(Course.canvas_id).filter(Course.canvas_id.isnot(None)).all()
+        # Convert list of tuples (e.g., [('123',), ('456',)]) to a set of strings
+        return {str(r[0]) for r in results if r[0] is not None}
         
     # ---- Get Course List ----
     # Renamed and simplified
