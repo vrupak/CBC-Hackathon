@@ -1,6 +1,6 @@
 import type { Route } from "./+types/home";
 import { Layout } from "../components/Layout";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { uploadMaterial } from "../utils/api";
 
@@ -64,12 +64,44 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export default function Home() {
+  // Load initial state from sessionStorage
+  const loadInitialState = () => {
+    if (typeof sessionStorage !== 'undefined') {
+      const savedState = sessionStorage.getItem('homeUploadState');
+      if (savedState) {
+        try {
+          return JSON.parse(savedState);
+        } catch (e) {
+          console.error("Failed to load saved state:", e);
+        }
+      }
+    }
+    return {
+      isUploading: false,
+      uploadError: null,
+      uploadSuccess: false,
+    };
+  };
+
+  const initialState = loadInitialState();
+
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [isUploading, setIsUploading] = useState(initialState.isUploading);
+  const [uploadError, setUploadError] = useState<string | null>(initialState.uploadError);
+  const [uploadSuccess, setUploadSuccess] = useState(initialState.uploadSuccess);
   const navigate = useNavigate();
+
+  // Save state to sessionStorage whenever it changes
+  useEffect(() => {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem('homeUploadState', JSON.stringify({
+        isUploading,
+        uploadError,
+        uploadSuccess,
+      }));
+    }
+  }, [isUploading, uploadError, uploadSuccess]);
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -166,7 +198,8 @@ export default function Home() {
       }
 
       setUploadSuccess(true);
-      
+      setIsUploading(false);
+
       // Navigate to study path after a brief delay to show success message
       setTimeout(() => {
         navigate("/study-path", {
@@ -174,7 +207,7 @@ export default function Home() {
             fileId: response.file_id,
             filename: response.filename,
             // Pass the structured array directly via state
-            topics: structuredTopics, 
+            topics: structuredTopics,
           },
         });
       }, 1500);
@@ -191,6 +224,12 @@ export default function Home() {
     setSelectedFile(null);
     setUploadError(null);
     setUploadSuccess(false);
+    setIsUploading(false);
+
+    // Clear upload state from sessionStorage
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem('homeUploadState');
+    }
   };
 
   return (
