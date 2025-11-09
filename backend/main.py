@@ -8,6 +8,7 @@ from typing import Optional, Annotated, List
 import httpx 
 from dotenv import load_dotenv
 import logging
+import re
 
 from services.supermemory_service import SupermemoryService 
 from services.claude_service import ClaudeService 
@@ -25,6 +26,11 @@ CANVAS_TOKEN = os.getenv("CANVAS_TOKEN")
 
 app = FastAPI(title="AI Study Buddy API (Single-User)", version="1.0.0")
 
+# --- FILE PATH CONFIGURATION ---
+# Base directory for all downloaded course files
+DOWNLOAD_BASE_DIR = Path(__file__).parent / "download"
+DOWNLOAD_BASE_DIR.mkdir(parents=True, exist_ok=True) # Ensure base directory exists
+
 # --- SCHEMA FOR ADDING COURSES ---
 class CourseSelection(BaseModel):
     # Expects a list of strings, where each string is the Canvas Course ID (e.g., "5001")
@@ -40,7 +46,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create uploads directory if it doesn't exist
+# Create uploads directory if it doesn't exist (Original non-Canvas upload location)
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -101,19 +107,29 @@ def get_db_service() -> Optional[DBService]:
     if _db_service is None:
         _db_service = DBService()
     return _db_service
+    
+def get_canvas_service(token: str) -> Optional[CanvasService]:
+    """Get or initialize Canvas service"""
+    try:
+        return CanvasService(token)
+    except ValueError as e:
+        logger.error(f"Canvas service failed initialization: {e}")
+        return None
+
+# --- UTILITY: Path Sanitization ---
+def sanitize_path_name(name: str) -> str:
+    """Sanitizes a string for use as a directory or file name."""
+    # Replace non-alphanumeric, non-space, non-hyphen, non-underscore characters with nothing
+    sanitized = re.sub(r'[^\w\s-]', '', name).strip()
+    # Replace spaces with underscores
+    sanitized = re.sub(r'[-\s]+', '_', sanitized)
+    return sanitized or 'unknown_resource'
 
 
 # --- STARTUP/SHUTDOWN EVENTS ---
 @app.on_event("startup")
 def startup_event():
-    # --- ACTION: Reset the DB to ensure the new schema is used ---
-    # This is left here to resolve the previous OperationalError. 
-    # For long-term use, this should be replaced by a proper migration system.
-    # Note: If you want to keep your data, comment out or remove reset_db_schema() 
-    # after the initial successful run.
     reset_db_schema() 
-    
-    # Initialize the database and create all tables (only Course and Module now)
     logger.info("Initializing SQLAlchemy database with new schema...")
     init_db() 
     get_db_service()
@@ -158,7 +174,7 @@ async def get_all_courses(db: DBSession):
         response_courses.append({
             "courseName": course.name,
             "local_course_id": course.id, # Internal PK (1, 2, 3...)
-            "canvas_id": course.canvas_id, # <<< NEW: External Canvas ID (5001, 6002...)
+            "canvas_id": course.canvas_id, # External Canvas ID (5001, 6002...)
             "progress": course.progress,
             "total_modules": course.total_modules,
             "module_count": len(modules),
@@ -180,8 +196,11 @@ async def get_available_canvas_courses(db: DBSession):
         )
 
     try:
+        canvas_service = get_canvas_service(canvas_token)
+        if not canvas_service:
+            raise Exception("Canvas Service Initialization failed.")
+            
         # 1. Fetch all active courses from Canvas API
-        canvas_service = CanvasService(canvas_token)
         all_canvas_courses = await canvas_service.get_user_courses()
         
         # 2. Get the set of IDs already stored in the local DB
@@ -190,15 +209,13 @@ async def get_available_canvas_courses(db: DBSession):
         # 3. Filter the Canvas courses
         available_courses = []
         for course in all_canvas_courses:
-            # IMPORTANT: Use the canvas 'id' field for filtering and returning
             course_id_str = str(course.get("id"))
             
-            # Check if course has a name and is not already in the local DB
             if course.get("name") and course_id_str not in local_canvas_ids:
                 available_courses.append({
                     "canvas_id": course_id_str,
                     "name": course.get("name"),
-                    "course_code": course.get("course_code", "N/A") # Include course code if available
+                    "course_code": course.get("course_code", "N/A")
                 })
         
         return JSONResponse(
@@ -219,16 +236,17 @@ async def get_available_canvas_courses(db: DBSession):
 @app.post("/api/canvas/add-courses")
 async def add_selected_canvas_courses(
     db: DBSession, 
-    selection: CourseSelection # Uses the Pydantic model for validation
+    selection: CourseSelection
 ):
     db_service = get_db_service()
     imported_count = 0
     
-    # Fetch all courses from Canvas API one last time to get the names for the IDs
     try:
-        canvas_service = CanvasService(CANVAS_TOKEN)
+        canvas_service = get_canvas_service(CANVAS_TOKEN)
+        if not canvas_service:
+            raise Exception("Canvas Service Initialization failed.")
+            
         all_canvas_courses = await canvas_service.get_user_courses()
-        # Map Canvas ID (string) to Course Name (string)
         canvas_course_map = {str(c.get("id")): c.get("name") for c in all_canvas_courses if c.get("id") and c.get("name")}
     except Exception as e:
         logger.error(f"Failed to verify course IDs against Canvas: {e}")
@@ -238,15 +256,13 @@ async def add_selected_canvas_courses(
         )
 
     for course_id_str in selection.canvas_course_ids:
-        # 1. Verify the ID is valid and exists on Canvas
         course_name = canvas_course_map.get(course_id_str)
         
         if course_name:
-            # 2. Add the course to the local DB. The canvas_id is correctly saved here.
             db_service.get_or_create_course_from_canvas(
                 db, 
                 course_name=course_name, 
-                canvas_id=course_id_str # This is the external Canvas ID (e.g., "5001")
+                canvas_id=course_id_str
             )
             imported_count += 1
             
@@ -267,9 +283,7 @@ async def add_selected_canvas_courses(
 async def sync_all_canvas_courses(db: DBSession):
     db_service = get_db_service()
     
-    # Load token directly from environment variable
     canvas_token = CANVAS_TOKEN
-    
     if not canvas_token:
         raise HTTPException(
             status_code=500,
@@ -277,18 +291,18 @@ async def sync_all_canvas_courses(db: DBSession):
         )
     
     try:
-        # Instantiate CanvasService with the environment token
-        canvas_service = CanvasService(canvas_token)
+        canvas_service = get_canvas_service(canvas_token)
+        if not canvas_service:
+            raise Exception("Canvas Service Initialization failed.")
+            
         canvas_courses = await canvas_service.get_user_courses()
         
-        # Save/update courses in the local DB
         imported_count = 0
         for canvas_course in canvas_courses:
             course_name = canvas_course.get("name")
             course_id = str(canvas_course.get("id"))
             
             if course_name and course_id:
-                # This ensures every course found on Canvas is added locally
                 db_service.get_or_create_course_from_canvas(
                     db, 
                     course_name=course_name, 
@@ -305,9 +319,139 @@ async def sync_all_canvas_courses(db: DBSession):
         error_msg = f"Canvas API Error: HTTP {e.response.status_code}. Please check your CANVAS_TOKEN validity."
         raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
-        # The original error handling here is too broad, but we keep it for unexpected errors
         error_msg = f"An unexpected error occurred during Canvas sync: {str(e)}"
         logger.error(f"Canvas sync failed: {e}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+# --- NEW: Endpoint to sync files for a specific course (from previous response) ---
+@app.post("/api/canvas/courses/{local_course_id}/sync-files")
+async def sync_course_files(
+    local_course_id: int,
+    db: DBSession
+):
+    db_service = get_db_service()
+    
+    course = db.query(Course).filter_by(id=local_course_id).first()
+    if not course or not course.canvas_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Course with local ID {local_course_id} not found or has no Canvas ID."
+        )
+
+    canvas_token = CANVAS_TOKEN
+    if not canvas_token:
+        raise HTTPException(
+            status_code=500,
+            detail="CANVAS_TOKEN environment variable not set. Cannot connect to Canvas."
+        )
+
+    try:
+        canvas_service = get_canvas_service(canvas_token)
+        if not canvas_service:
+            raise Exception("Canvas Service Initialization failed.")
+            
+        canvas_files = await canvas_service.get_course_files(course.canvas_id)
+        
+        if not canvas_files:
+            return JSONResponse(
+                status_code=200,
+                content={"message": f"No files found on Canvas for course '{course.name}' ({course.canvas_id}). 0 modules synced."}
+            )
+
+        synced_count = db_service.sync_modules_from_canvas_files(db, local_course_id, canvas_files)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "message": f"Successfully synced {synced_count} file(s) from Canvas to course '{course.name}' modules.",
+                "total_files_found": len(canvas_files)
+            }
+        )
+    
+    except httpx.HTTPStatusError as e:
+        error_msg = f"Canvas API Error: HTTP {e.response.status_code}. Please check your CANVAS_TOKEN or course ID validity."
+        logger.error(f"Canvas file sync failed for course {local_course_id}: {e}")
+        raise HTTPException(status_code=400, detail=error_msg)
+    except Exception as e:
+        error_msg = f"An unexpected error occurred during Canvas file sync: {str(e)}"
+        logger.error(f"Canvas file sync failed for course {local_course_id}: {e}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+# --- NEW: Endpoint to download a specific module file ---
+@app.post("/api/canvas/modules/{local_module_id}/download")
+async def download_module_file(
+    local_module_id: int,
+    db: DBSession
+):
+    db_service = get_db_service()
+    
+    # 1. Retrieve the module and course details from the database
+    module = db.query(Module).filter_by(id=local_module_id).first()
+    if not module:
+        raise HTTPException(status_code=404, detail=f"Module with ID {local_module_id} not found.")
+
+    course = module.course
+    if not course:
+        raise HTTPException(status_code=500, detail="Associated course not found for this module.")
+        
+    if not module.file_url:
+        raise HTTPException(status_code=400, detail="Module does not have a Canvas download URL.")
+
+    if module.is_downloaded:
+        return JSONResponse(
+            status_code=200,
+            content={"message": f"File '{module.name}' is already downloaded."}
+        )
+
+    canvas_token = CANVAS_TOKEN
+    if not canvas_token:
+        raise HTTPException(
+            status_code=500,
+            detail="CANVAS_TOKEN environment variable not set. Cannot connect to Canvas."
+        )
+
+    try:
+        # 2. Determine the save path: backend/download/{sanitized_course_name}/{module_name}
+        course_folder_name = sanitize_path_name(course.name)
+        file_path_name = module.name # Use the display name provided by Canvas
+        
+        # Construct the final absolute path
+        local_dir = DOWNLOAD_BASE_DIR / course_folder_name
+        local_file_path = local_dir / file_path_name
+
+        # 3. Download the file
+        canvas_service = get_canvas_service(canvas_token)
+        if not canvas_service:
+            raise Exception("Canvas Service Initialization failed.")
+            
+        await canvas_service.download_file(
+            file_url=module.file_url,
+            save_path=local_file_path
+        )
+
+        # 4. Update the database status
+        db_service.update_module_download_status(db, local_module_id, is_downloaded=True)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "message": f"Successfully downloaded '{module.name}' for course '{course.name}'.",
+                "local_path": str(local_file_path)
+            }
+        )
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"File Download Error: HTTP {e.response.status_code}. The secure URL may have expired."
+        logger.error(f"File download failed for module {local_module_id}: {e}")
+        # If download fails, ensure status is False
+        db_service.update_module_download_status(db, local_module_id, is_downloaded=False)
+        raise HTTPException(status_code=400, detail=error_msg)
+    except Exception as e:
+        error_msg = f"An unexpected error occurred during file download: {str(e)}"
+        logger.error(f"File download failed for module {local_module_id}: {e}")
+        # If download fails, ensure status is False
+        db_service.update_module_download_status(db, local_module_id, is_downloaded=False)
         raise HTTPException(status_code=500, detail=error_msg)
 
 

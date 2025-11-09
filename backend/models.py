@@ -38,8 +38,18 @@ class Module(Base):
     name = Column(String, nullable=False)
     completed = Column(Boolean, default=False)
     
+    # --- NEW: Canvas File Fields ---
+    canvas_file_id = Column(String, nullable=True) # External file ID from Canvas
+    file_url = Column(String, nullable=True)       # Secure download URL from Canvas
+    is_downloaded = Column(Boolean, default=False) # Status of local file download
+    is_ingested = Column(Boolean, default=False)   # Status of RAG ingestion
+    
     # Relationship to Course
     course = relationship("Course", back_populates="modules")
+
+    # Add a unique constraint to prevent duplicate file records for the same course
+    __table_args__ = (UniqueConstraint('course_id', 'canvas_file_id', name='_course_file_uc'),)
+
 
 # SQLite engine setup
 engine = create_engine(DB_PATH, echo=True)
