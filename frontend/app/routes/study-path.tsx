@@ -1,6 +1,7 @@
 import type { Route } from "./+types/study-path";
 import { Layout } from "../components/Layout";
 import { useState } from "react";
+import { useLocation } from "react-router";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -12,92 +13,133 @@ export function meta({}: Route.MetaArgs) {
   ];
 }
 
-// Mock data for demonstration
-const mockTopics = [
-  {
-    id: 1,
-    title: "Introduction to Machine Learning",
-    description: "Basic concepts and terminology",
-    status: "completed" as const,
-    subtopics: [
-      { id: 1, title: "What is Machine Learning?", completed: true },
-      { id: 2, title: "Types of Learning", completed: true },
-      { id: 3, title: "Applications", completed: true },
-    ],
-  },
-  {
-    id: 2,
-    title: "Supervised Learning",
-    description: "Learning with labeled data",
-    status: "in-progress" as const,
-    subtopics: [
-      { id: 1, title: "Regression", completed: true },
-      { id: 2, title: "Classification", completed: true },
-      { id: 3, title: "Decision Trees", completed: false },
-      { id: 4, title: "Random Forests", completed: false },
-    ],
-  },
-  {
-    id: 3,
-    title: "Unsupervised Learning",
-    description: "Finding patterns in unlabeled data",
-    status: "pending" as const,
-    subtopics: [
-      { id: 1, title: "Clustering", completed: false },
-      { id: 2, title: "Dimensionality Reduction", completed: false },
-      { id: 3, title: "PCA", completed: false },
-    ],
-  },
-  {
-    id: 4,
-    title: "Neural Networks",
-    description: "Deep learning fundamentals",
-    status: "pending" as const,
-    subtopics: [
-      { id: 1, title: "Perceptrons", completed: false },
-      { id: 2, title: "Backpropagation", completed: false },
-      { id: 3, title: "CNN", completed: false },
-      { id: 4, title: "RNN", completed: false },
-    ],
-  },
-  {
-    id: 5,
-    title: "Model Evaluation",
-    description: "Testing and validating your models",
-    status: "pending" as const,
-    subtopics: [
-      { id: 1, title: "Cross-validation", completed: false },
-      { id: 2, title: "Metrics", completed: false },
-      { id: 3, title: "Overfitting", completed: false },
-    ],
-  },
-];
+// Define the required data structure to match the parsed data from home.tsx
+interface Subtopic {
+  id: number;
+  title: string;
+  completed: boolean;
+}
+
+interface Topic {
+  id: number;
+  title: string;
+  description: string;
+  status: "completed" | "in-progress" | "pending";
+  subtopics: Subtopic[];
+}
+
+// Fallback logic to get the data if state is empty (e.g., page refresh)
+const loadTopicsFromSession = (): Topic[] => {
+  // --- Guard against server-side rendering ---
+  if (typeof window === 'undefined' || typeof sessionStorage === 'undefined') {
+    return [
+      {
+        id: 0,
+        title: "Loading...",
+        description: "Awaiting client-side execution to check local storage or navigation data.",
+        status: "pending",
+        subtopics: [],
+      }
+    ];
+  }
+  
+  try {
+    const jsonString = sessionStorage.getItem('extractedTopicsJson');
+    if (jsonString) {
+      const topics: Topic[] = JSON.parse(jsonString);
+      return topics;
+    }
+  } catch (error) {
+    console.error("Error loading topics from session storage:", error);
+  }
+  // Fallback to a single placeholder topic if no data is found
+  return [
+    {
+      id: 0,
+      title: "No Topics Found",
+      description: "Please go back to the Home page and upload a study material to generate a path.",
+      status: "pending",
+      subtopics: [],
+    }
+  ];
+};
+
 
 export default function StudyPath() {
-  const [topics, setTopics] = useState(mockTopics);
-  const [expandedTopic, setExpandedTopic] = useState<number | null>(1);
+  const location = useLocation();
+  
+  // 1. Get initial topics from navigation state or session storage
+  const initialTopicsFromState = (location.state as { topics?: Topic[] })?.topics;
+  
+  const initialTopics: Topic[] = initialTopicsFromState 
+    ? initialTopicsFromState 
+    : loadTopicsFromSession();
+    
+  // Also retrieve the filename for display
+  const filename = (location.state as { filename?: string })?.filename || (
+    typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('filename') : "Uploaded Material"
+  ) || "Uploaded Material";
+
+  const [topics, setTopics] = useState(initialTopics);
+  // Default to expanding the first active topic
+  const [expandedTopic, setExpandedTopic] = useState<number | null>(
+    topics.length > 0 && topics[0].id !== 0 ? topics[0].id : null
+  );
 
   const toggleTopic = (topicId: number) => {
     setExpandedTopic(expandedTopic === topicId ? null : topicId);
   };
 
   const toggleSubtopic = (topicId: number, subtopicId: number) => {
-    setTopics(
-      topics.map((topic) => {
-        if (topic.id === topicId) {
-          return {
-            ...topic,
-            subtopics: topic.subtopics.map((subtopic) =>
-              subtopic.id === subtopicId
-                ? { ...subtopic, completed: !subtopic.completed }
-                : subtopic
-            ),
-          };
+    const newTopics = topics.map((topic) => {
+      if (topic.id === topicId) {
+        // Toggle the completed status of the subtopic
+        const newSubtopics = topic.subtopics.map((subtopic) =>
+          subtopic.id === subtopicId
+            ? { ...subtopic, completed: !subtopic.completed }
+            : subtopic
+        );
+        
+        // Update the main topic status based on subtopic completion
+        const completedCount = newSubtopics.filter(st => st.completed).length;
+        const totalCount = newSubtopics.length;
+        let newStatus: Topic['status'];
+
+        if (completedCount === totalCount) {
+          newStatus = 'completed';
+          // Find the next topic and set it to 'in-progress'
+          const nextTopicIndex = topics.findIndex(t => t.id === topicId) + 1;
+          if (nextTopicIndex < topics.length) {
+            setTopics(prevTopics => prevTopics.map((t, index) => {
+              if (index === nextTopicIndex && t.status === 'pending') {
+                return { ...t, status: 'in-progress' };
+              }
+              return t;
+            }));
+          }
+        } else if (completedCount > 0) {
+          newStatus = 'in-progress';
+        } else {
+          newStatus = 'pending';
         }
-        return topic;
-      })
-    );
+        
+        return {
+          ...topic,
+          subtopics: newSubtopics,
+          status: newStatus
+        };
+      }
+      return topic;
+    });
+
+    setTopics(newTopics);
+    
+    // Persist the updated topics to session storage
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem('extractedTopicsJson', JSON.stringify(newTopics));
+    }
   };
+
 
   const getProgress = () => {
     const totalSubtopic = topics.reduce(
@@ -182,11 +224,11 @@ export default function StudyPath() {
     <Layout>
       <div className="max-w-5xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-4">
+          <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
             Your Study Path
           </h1>
-          <p className="text-lg text-gray-600 dark:text-gray-300 mb-6">
-            Follow this recommended path to master your study material
+          <p className="text-lg text-gray-600 dark:text-gray-300 mb-4">
+            Path generated from: <span className="font-semibold text-blue-600 dark:text-blue-400">{filename}</span>
           </p>
 
           {/* Progress Overview */}
@@ -227,125 +269,148 @@ export default function StudyPath() {
         </div>
 
         {/* Topics List */}
-        <div className="space-y-4">
-          {topics.map((topic, index) => {
-            const completedSubtopic = topic.subtopics.filter(
-              (st) => st.completed
-            ).length;
-            const totalSubtopic = topic.subtopics.length;
-            const subtopicProgress =
-              totalSubtopic > 0
-                ? Math.round((completedSubtopic / totalSubtopic) * 100)
-                : 0;
+        {topics.length > 0 && topics[0].id !== 0 && topics[0].title !== "Loading..." ? (
+          <div className="space-y-4">
+            {topics.map((topic, index) => {
+              const completedSubtopic = topic.subtopics.filter(
+                (st) => st.completed
+              ).length;
+              const totalSubtopic = topic.subtopics.length;
+              const subtopicProgress =
+                totalSubtopic > 0
+                  ? Math.round((completedSubtopic / totalSubtopic) * 100)
+                  : 0;
+              
+              // Check if the topic is currently active (in-progress or completed)
+              const isTopicActive = topic.status !== 'pending';
 
-            return (
-              <div
-                key={topic.id}
-                className="bg-white dark:bg-gray-800 rounded-xl shadow-md hover:shadow-lg transition-shadow overflow-hidden"
-              >
-                <button
-                  onClick={() => toggleTopic(topic.id)}
-                  className="w-full p-6 text-left focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl"
+              return (
+                <div
+                  key={topic.id}
+                  className="bg-white dark:bg-gray-800 rounded-xl shadow-md hover:shadow-lg transition-shadow overflow-hidden"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-4 flex-1">
-                      <div
-                        className={`flex-shrink-0 w-10 h-10 rounded-full ${getStatusColor(
-                          topic.status
-                        )} flex items-center justify-center`}
-                      >
-                        {getStatusIcon(topic.status)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center space-x-3 mb-1">
-                          <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                            {String(index + 1).padStart(2, "0")}
-                          </span>
-                          <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
-                            {topic.title}
-                          </h3>
-                        </div>
-                        <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
-                          {topic.description}
-                        </p>
-                        <div className="flex items-center space-x-4">
-                          <div className="w-32 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                            <div
-                              className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                              style={{ width: `${subtopicProgress}%` }}
-                            />
-                          </div>
-                          <span className="text-sm text-gray-500 dark:text-gray-400">
-                            {completedSubtopic}/{totalSubtopic} subtopics
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <svg
-                      className={`w-6 h-6 text-gray-400 transform transition-transform ${
-                        expandedTopic === topic.id ? "rotate-180" : ""
-                      }`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
-                  </div>
-                </button>
-
-                {expandedTopic === topic.id && (
-                  <div className="px-6 pb-6 border-t border-gray-200 dark:border-gray-700 pt-4">
-                    <div className="space-y-2">
-                      {topic.subtopics.map((subtopic) => (
-                        <label
-                          key={subtopic.id}
-                          className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors"
+                  <button
+                    onClick={() => toggleTopic(topic.id)}
+                    className="w-full p-6 text-left focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl"
+                    // 🛑 FIX: REMOVED THE disabled PROP TO ALLOW EXPANSION 🛑
+                    // disabled={topic.status === 'pending' && index !== 0} 
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-4 flex-1">
+                        <div
+                          className={`flex-shrink-0 w-10 h-10 rounded-full ${getStatusColor(
+                            topic.status
+                          )} flex items-center justify-center`}
                         >
-                          <input
-                            type="checkbox"
-                            checked={subtopic.completed}
-                            onChange={() =>
-                              toggleSubtopic(topic.id, subtopic.id)
-                            }
-                            className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                          />
-                          <span
-                            className={`flex-1 ${
-                              subtopic.completed
-                                ? "line-through text-gray-400 dark:text-gray-500"
-                                : "text-gray-700 dark:text-gray-300"
+                          {getStatusIcon(topic.status)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center space-x-3 mb-1">
+                            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                              {String(index + 1).padStart(2, "0")}
+                            </span>
+                            <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
+                              {topic.title}
+                            </h3>
+                          </div>
+                          <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+                            {topic.description}
+                          </p>
+                          <div className="flex items-center space-x-4">
+                            <div className="w-32 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                              <div
+                                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                                style={{ width: `${subtopicProgress}%` }}
+                              />
+                            </div>
+                            <span className="text-sm text-gray-500 dark:text-gray-400">
+                              {completedSubtopic}/{totalSubtopic} subtopics
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <svg
+                        className={`w-6 h-6 text-gray-400 transform transition-transform ${
+                          expandedTopic === topic.id ? "rotate-180" : ""
+                        }`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 9l-7 7-7-7"
+                        />
+                      </svg>
+                    </div>
+                  </button>
+
+                  {expandedTopic === topic.id && (
+                    <div className="px-6 pb-6 border-t border-gray-200 dark:border-gray-700 pt-4">
+                      <div className="space-y-2">
+                        {topic.subtopics.map((subtopic) => (
+                          <label
+                            key={subtopic.id}
+                            // Apply a disabled style if the topic is not active
+                            className={`flex items-center space-x-3 p-3 rounded-lg cursor-pointer transition-colors ${
+                                isTopicActive
+                                    ? "hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                                    : "opacity-60 cursor-default"
                             }`}
                           >
-                            {subtopic.title}
-                          </span>
-                          {!subtopic.completed && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                // Navigate to chat with this topic
-                              }}
-                              className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium"
+                            <input
+                              type="checkbox"
+                              checked={subtopic.completed}
+                              onChange={() =>
+                                toggleSubtopic(topic.id, subtopic.id)
+                              }
+                              // 🛑 FIX: Disabled the checkbox if the topic is pending 🛑
+                              disabled={!isTopicActive} 
+                              className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                            />
+                            <span
+                              className={`flex-1 ${
+                                subtopic.completed
+                                  ? "line-through text-gray-400 dark:text-gray-500"
+                                  : "text-gray-700 dark:text-gray-300"
+                              }`}
                             >
-                              Study
-                            </button>
-                          )}
-                        </label>
-                      ))}
+                              {subtopic.title}
+                            </span>
+                            {/* Disable the Study button too */}
+                            {(!subtopic.completed && isTopicActive) && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // Navigate to chat with this topic
+                                }}
+                                className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium"
+                              >
+                                Study
+                              </button>
+                            )}
+                          </label>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center p-12 bg-white dark:bg-gray-800 rounded-xl shadow-lg">
+             <p className="text-xl font-semibold text-gray-700 dark:text-gray-300">
+                {topics[0].title === "Loading..." ? "Loading Study Path..." : "No Study Path Available."}
+            </p>
+            <p className="text-gray-500 dark:text-gray-400 mt-2">
+                {topics[0].description}
+            </p>
+          </div>
+        )}
       </div>
     </Layout>
   );
 }
-
