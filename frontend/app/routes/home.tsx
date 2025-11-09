@@ -1,6 +1,7 @@
 import type { Route } from "./+types/home";
 import { Layout } from "../components/Layout";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { flushSync } from "react-dom";
 import { useNavigate } from "react-router";
 import { uploadMaterial } from "../utils/api";
 
@@ -71,6 +72,49 @@ export default function Home() {
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const navigate = useNavigate();
 
+  // Load and validate upload state from sessionStorage on mount
+  useEffect(() => {
+    if (typeof sessionStorage !== 'undefined') {
+      const uploadStateStr = sessionStorage.getItem('uploadState');
+      if (uploadStateStr) {
+        try {
+          const uploadState = JSON.parse(uploadStateStr);
+          const now = Date.now();
+          // Clear state if it's older than 5 minutes (stuck state)
+          if (uploadState.timestamp && (now - uploadState.timestamp) > 5 * 60 * 1000) {
+            console.log('[Upload] Clearing stuck upload state');
+            sessionStorage.removeItem('uploadState');
+          } else if (uploadState.isUploading) {
+            // Restore uploading state
+            console.log('[Upload] Restoring upload state from sessionStorage');
+            setIsUploading(true);
+          }
+        } catch (e) {
+          console.error('[Upload] Failed to parse upload state:', e);
+          sessionStorage.removeItem('uploadState');
+        }
+      }
+    }
+  }, []);
+
+  // Persist upload state to sessionStorage so it survives tab switches
+  useEffect(() => {
+    if (typeof sessionStorage !== 'undefined') {
+      if (isUploading) {
+        const uploadState = {
+          isUploading: true,
+          timestamp: Date.now(),
+        };
+        sessionStorage.setItem('uploadState', JSON.stringify(uploadState));
+        console.log('[Upload] Saved uploading state to sessionStorage');
+      } else {
+        // Clear state when not uploading
+        sessionStorage.removeItem('uploadState');
+        console.log('[Upload] Cleared upload state from sessionStorage');
+      }
+    }
+  }, [isUploading]);
+
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -123,9 +167,14 @@ export default function Home() {
       return;
     }
 
-    setIsUploading(true);
-    setUploadError(null);
-    setUploadSuccess(false);
+    // Use flushSync to immediately update the UI before starting the async operation
+    flushSync(() => {
+      setIsUploading(true);
+      setUploadError(null);
+      setUploadSuccess(false);
+    });
+
+    console.log("[Upload] Starting upload for:", selectedFile.name);
 
     try {
       const response = await uploadMaterial(selectedFile);
@@ -139,23 +188,44 @@ export default function Home() {
       if (response.topics_extracted && response.topics) {
         // 2. Parse the raw topics string from the backend
         structuredTopics = parseClaudeTopics(response.topics);
-        
-        // 3. Store the structured topics in sessionStorage (good for refresh/direct navigation)
-        // --- FIX: Check for client environment before writing to sessionStorage ---
-        if (typeof sessionStorage !== 'undefined') {
-          sessionStorage.setItem('uploadedFileId', response.file_id);
-          sessionStorage.setItem('extractedTopicsJson', JSON.stringify(structuredTopics));
-          sessionStorage.setItem('filename', response.filename);
-        }
-      } else {
-        // Handle case where topics extraction failed
-        setUploadError(response.topics_error || "File uploaded, but topic extraction failed.");
-        setIsUploading(false);
-        return; // Stop here if we can't get topics
+      } else if (!response.topics_extracted) {
+        // Topics extraction failed - create placeholder topics from the filename
+        console.warn("Topic extraction not available. Creating placeholder topics.");
+        structuredTopics = [{
+          id: 1,
+          title: response.filename.replace(/\.[^/.]+$/, ""), // Remove file extension
+          description: "Topics to be extracted",
+          subtopics: [{ id: 1, title: "Content pending extraction" }],
+          status: 'in-progress' as const,
+        }];
       }
 
-      setUploadSuccess(true);
-      
+      // 3. Store the structured topics in sessionStorage (good for refresh/direct navigation)
+      // --- FIX: Check for client environment before writing to sessionStorage ---
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('uploadedFileId', response.file_id);
+        sessionStorage.setItem('current_file_id', response.file_id); // For chat context
+        sessionStorage.setItem('extractedTopicsJson', JSON.stringify(structuredTopics));
+        sessionStorage.setItem('filename', response.filename);
+      }
+
+      // Show warning if topics extraction failed, but still allow navigation
+      if (!response.topics_extracted && response.topics_error) {
+        console.warn("Topics extraction warning:", response.topics_error);
+      }
+
+      console.log("[Upload] Upload successful, navigating to study path");
+
+      flushSync(() => {
+        setUploadSuccess(true);
+        setIsUploading(false);
+      });
+
+      // Clear upload state from sessionStorage immediately
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem('uploadState');
+      }
+
       // Navigate to study path after a brief delay to show success message
       setTimeout(() => {
         navigate("/study-path", {
@@ -163,16 +233,24 @@ export default function Home() {
             fileId: response.file_id,
             filename: response.filename,
             // Pass the structured array directly via state
-            topics: structuredTopics, 
+            topics: structuredTopics,
           },
         });
       }, 1500);
     } catch (error: any) {
-      console.error("Upload error:", error);
-      console.error("Error response:", error.response?.data);
+      console.error("[Upload] Upload error:", error);
+      console.error("[Upload] Error response:", error.response?.data);
       const errorMessage = error.response?.data?.detail || error.message || "Failed to upload file. Please try again.";
-      setUploadError(errorMessage);
-      setIsUploading(false);
+
+      flushSync(() => {
+        setUploadError(errorMessage);
+        setIsUploading(false);
+      });
+
+      // Clear upload state from sessionStorage on error
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem('uploadState');
+      }
     }
   };
 
@@ -180,6 +258,7 @@ export default function Home() {
     setSelectedFile(null);
     setUploadError(null);
     setUploadSuccess(false);
+    setIsUploading(false);
   };
 
   return (
@@ -340,7 +419,9 @@ export default function Home() {
             onClick={handleGeneratePath}
             disabled={!selectedFile || isUploading}
             className={`px-8 py-4 rounded-lg font-semibold text-lg transition-all duration-200 flex items-center ${
-              selectedFile && !isUploading
+              isUploading
+                ? "bg-blue-600 text-white cursor-wait"
+                : selectedFile
                 ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                 : "bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
             }`}

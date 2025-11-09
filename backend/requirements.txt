@@ -6,4 +6,5 @@ anthropic==0.39.0
 pypdf2==3.0.1
 python-dotenv==1.0.1
 httpx==0.27.2
+sqlalchemy==2.0.23
 

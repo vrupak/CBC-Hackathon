@@ -1,8 +1,7 @@
-import { Link, useLocation } from "react-router";
+import { Link } from "react-router";
+import * as React from "react";
 
 export function Layout({ children }: { children: React.ReactNode }) {
-  const location = useLocation();
-
   const navItems = [
     { path: "/", label: "Home", icon: HomeIcon },
     { path: "/study-path", label: "Study Path", icon: StudyPathIcon },
@@ -34,26 +33,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <span>AI Study Buddy</span>
             </Link>
 
-            <div className="flex space-x-1">
-              {navItems.map((item) => {
-                const isActive = location.pathname === item.path;
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                      isActive
-                        ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
-                        : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white"
-                    }`}
-                  >
-                    <Icon className="w-5 h-5" />
-                    <span className="hidden sm:inline">{item.label}</span>
-                  </Link>
-                );
-              })}
-            </div>
+            <ClientNav navItems={navItems} />
           </div>
         </div>
       </nav>
@@ -61,6 +41,39 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {children}
       </main>
+    </div>
+  );
+}
+
+function ClientNav({ navItems }: { navItems: Array<{ path: string; label: string; icon: React.ComponentType<{ className?: string }> }> }) {
+  const [currentPath, setCurrentPath] = React.useState<string>("/");
+
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setCurrentPath(window.location.pathname);
+    }
+  }, []);
+
+  return (
+    <div className="flex space-x-1">
+      {navItems.map((item) => {
+        const isActive = currentPath === item.path;
+        const Icon = item.icon;
+        return (
+          <Link
+            key={item.path}
+            to={item.path}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+              isActive
+                ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
+                : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white"
+            }`}
+          >
+            <Icon className="w-5 h-5" />
+            <span className="hidden sm:inline">{item.label}</span>
+          </Link>
+        );
+      })}
     </div>
   );
 }
