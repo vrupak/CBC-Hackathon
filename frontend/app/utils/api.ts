@@ -144,3 +144,13 @@ export const retrieveTopics = async (localModuleId: number): Promise<{ topics: s
     const response = await axios.get(`${API_BASE_URL}/llm/modules/${localModuleId}/study-path`);
     return response.data;
 };
+
+/**
+ * Updates the persisted study path JSON for a module with new progress.
+ */
+export const updateStudyPath = async (localModuleId: number, topicsJson: string): Promise<{ message: string }> => {
+    const response = await axios.put(`${API_BASE_URL}/llm/modules/${localModuleId}/update-study-path`, {
+        topics_json: topicsJson
+    });
+    return response.data;
+};

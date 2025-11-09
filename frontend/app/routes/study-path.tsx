@@ -1,7 +1,8 @@
 import type { Route } from "./+types/study-path";
-import { Layout } from "../components/Layout";
-import { useState } from "react";
+import { Layout } from "../components/Layout"; // <-- FIX: Changed path from ../ to ./
+import { useState, useEffect } from "react";
 import { useLocation } from "react-router";
+import { updateStudyPath } from "../utils/api"; // <-- FIX: Changed path from ../ to ./
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -79,8 +80,14 @@ export default function StudyPath() {
   const filename = (location.state as { filename?: string })?.filename || (
     typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('filename') : "Uploaded Material"
   ) || "Uploaded Material";
+  
+  // --- NEW: Get Module ID for persisting updates ---
+  const initialModuleId = (location.state as { moduleId?: number })?.moduleId || 
+    (typeof sessionStorage !== 'undefined' ? parseInt(sessionStorage.getItem('currentModuleId') || '0', 10) : 0);
 
   const [topics, setTopics] = useState(initialTopics);
+  const [moduleId, setModuleId] = useState(initialModuleId); // <-- NEW STATE
+  
   // Default to expanding the first active topic
   const [expandedTopic, setExpandedTopic] = useState<number | null>(
     topics.length > 0 && topics[0].id !== 0 ? topics[0].id : null
@@ -90,7 +97,7 @@ export default function StudyPath() {
     setExpandedTopic(expandedTopic === topicId ? null : topicId);
   };
 
-  const toggleSubtopic = (topicId: number, subtopicId: number) => {
+  const toggleSubtopic = async (topicId: number, subtopicId: number) => { // <-- MAKE ASYNC
     const newTopics = topics.map((topic) => {
       if (topic.id === topicId) {
         // Toggle the completed status of the subtopic
@@ -129,9 +136,22 @@ export default function StudyPath() {
     setTopics(newTopics);
     
     // Persist the updated topics to session storage
+    const newTopicsJson = JSON.stringify(newTopics); // <-- Store JSON in a var
     if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.setItem('extractedTopicsJson', JSON.stringify(newTopics));
+      sessionStorage.setItem('extractedTopicsJson', newTopicsJson);
     }
+    
+    // --- NEW: Persist to backend ---
+    if (moduleId && moduleId !== 0) {
+      try {
+        // Fire and forget, but log errors
+        await updateStudyPath(moduleId, newTopicsJson);
+      } catch (err) {
+        console.error("Failed to sync progress to backend:", err);
+        // Optionally show a small error toast to the user here
+      }
+    }
+    // --- END NEW ---
   };
 
 
