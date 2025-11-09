@@ -321,6 +321,41 @@ async def generate_module_topics(
         raise HTTPException(status_code=500, detail=error_msg)
 
 
+@app.put("/api/llm/modules/{local_module_id}/update-study-path")
+async def update_module_study_path(
+    local_module_id: int,
+    request: dict,
+    db: DBSession
+):
+    """
+    Update the study path JSON for a module (e.g., when user marks topics as completed)
+    """
+    db_service = get_db_service()
+
+    # 1. Retrieve the module
+    module = db.query(Module).filter_by(id=local_module_id).first()
+    if not module:
+        raise HTTPException(status_code=404, detail=f"Module with ID {local_module_id} not found.")
+
+    # 2. Get the new topics JSON from request
+    topics_json = request.get("topics_json")
+    if not topics_json:
+        raise HTTPException(status_code=400, detail="topics_json is required")
+
+    try:
+        # 3. Update the study path in the database
+        db_service.update_module_study_path(db, local_module_id, topics_json)
+
+        return JSONResponse(
+            status_code=200,
+            content={"message": "Study path updated successfully"}
+        )
+    except Exception as e:
+        error_msg = f"Error updating study path: {str(e)}"
+        logger.error(f"Study path update failed for module {local_module_id}: {e}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
 # --- Existing Canvas Sync Routes (Kept for completeness) ---
 
 @app.get("/api/canvas/available-courses")
