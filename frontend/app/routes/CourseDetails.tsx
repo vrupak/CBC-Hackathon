@@ -6,8 +6,11 @@ import {
     syncCourseFiles, 
     downloadModuleFile, 
     ingestModuleFile,
+    generateTopics, // <--- NEW API IMPORT
+    retrieveTopics, // <--- NEW API IMPORT
     type LocalModule,
 } from "../utils/api"; 
+import { parseClaudeTopics } from '../utils/TopicParser'; // <--- NEW PARSER IMPORT
 import { Layout } from "../components/Layout"; 
 
 
@@ -22,6 +25,7 @@ const ModuleActions: React.FC<{
 }> = ({ module, onActionComplete, onError, navigate, courseName }) => {
     const [isDownloading, setIsDownloading] = useState(false);
     const [isIngesting, setIsIngesting] = useState(false);
+    const [isGenerating, setIsGenerating] = useState(false); // <--- NEW STATE
     
     // Determine the next required action
     const nextAction = !module.is_downloaded ? 'download' : !module.is_ingested ? 'ingest' : 'completed';
@@ -54,42 +58,56 @@ const ModuleActions: React.FC<{
         }
     };
     
-    // Handle navigation to study path (simulating topic extraction via navigation state)
-    const handleGeneratePath = () => {
-        // NOTE: Since the backend currently only marks 'is_ingested=True' and doesn't return topics on ingestion,
-        // we'll navigate to the study path route and pass a placeholder to simulate the link.
+    // Handle navigation to study path (ACTUAL API CALL)
+    const handleGeneratePath = async (useCache: boolean) => { // <--- MODIFIED TO TAKE A FLAG
+        if (isGenerating) return;
+        setIsGenerating(true); 
 
-        // Placeholder for future topic extraction logic:
-        const mockTopics = [
-            {
-                id: 1,
-                title: "Mock Topic 1: Introduction to Data Structures",
-                description: "Fundamental concepts needed for understanding the rest of the course.",
-                status: 'in-progress',
-                subtopics: [{ id: 1, title: 'Arrays vs Linked Lists', completed: false }, { id: 2, title: 'Big O Notation Overview', completed: false }],
+        try {
+            let response;
+            if (useCache) {
+                // Use the dedicated retrieval endpoint for cached data
+                response = await retrieveTopics(module.id);
+            } else {
+                // Use the generation endpoint for new data
+                response = await generateTopics(module.id);
             }
-        ];
-        
-        // Use sessionStorage as a reliable way to pass complex data across routes, 
-        // similar to how the main Home upload works.
-        if (typeof sessionStorage !== 'undefined') {
-            sessionStorage.setItem('extractedTopicsJson', JSON.stringify(mockTopics));
-            sessionStorage.setItem('filename', module.name);
-        }
+            
+            // 1. Parse the raw JSON string into the structured format
+            const structuredTopics = parseClaudeTopics(response.topics); 
 
-        navigate("/study-path", {
-            state: {
-                // Simulate topic data being passed from an extraction endpoint
-                topics: mockTopics, 
-                filename: module.name,
-                source: `${courseName} - ${module.name}`
-            },
-        });
+            if (structuredTopics.length === 0) {
+                 onError("Topic generation failed or returned no data. Check API keys and backend logs.");
+                 return;
+            }
+            
+            // 2. Store in sessionStorage for path retention and refresh
+            if (typeof sessionStorage !== 'undefined') {
+                sessionStorage.setItem('extractedTopicsJson', JSON.stringify(structuredTopics));
+                sessionStorage.setItem('filename', response.filename); // Use filename from backend
+            }
+
+            // 3. Navigate to the study path route
+            navigate("/study-path", {
+                state: {
+                    topics: structuredTopics, 
+                    filename: response.filename,
+                    source: response.source || `${courseName} - ${module.name}`
+                },
+            });
+
+        } catch (err: any) {
+            console.error("Path action failed:", err);
+            onError(err.response?.data?.detail || "Failed to complete study path action.");
+        } finally {
+            setIsGenerating(false); 
+        }
     };
 
 
     // --- THEMED BUTTON LOGIC ---
-    const isActionDisabled = isDownloading || isIngesting;
+    // Update isActionDisabled to include isGenerating
+    const isActionDisabled = isDownloading || isIngesting || isGenerating; 
 
     // Status Indicator
     const StatusBadge = ({ label, color }: { label: string, color: string }) => (
@@ -104,11 +122,22 @@ const ModuleActions: React.FC<{
     let buttonHandler: (() => void) | null = null;
 
     if (module.is_ingested) {
-        statusElement = <StatusBadge label="Ingested" color="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300" />;
-        buttonText = "Generate Path";
-        // Final action uses the bold purple/indigo theme
-        buttonColor = "bg-purple-600 hover:bg-purple-700 text-white";
-        buttonHandler = handleGeneratePath;
+        // If the path has already been generated (has_study_path = true)
+        if (module.has_study_path) { // <--- NEW CHECK
+            statusElement = <StatusBadge label="Path Ready" color="bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300" />;
+            buttonText = isGenerating ? "Loading Path..." : "View Path";
+            buttonColor = isGenerating ? "bg-purple-400 text-white cursor-not-allowed" : "bg-purple-600 hover:bg-purple-700 text-white";
+            // Use the retrieval endpoint
+            buttonHandler = () => handleGeneratePath(true); 
+        } else {
+            // Path not generated yet
+            statusElement = <StatusBadge label="Ingested" color="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300" />;
+            buttonText = isGenerating ? "Generating..." : "Generate Path";
+            // Primary action uses the bold purple/indigo theme
+            buttonColor = isGenerating ? "bg-purple-400 text-white cursor-not-allowed" : "bg-purple-600 hover:bg-purple-700 text-white";
+            // Use the generation endpoint
+            buttonHandler = () => handleGeneratePath(false); 
+        }
     } else if (module.is_downloaded) {
         statusElement = <StatusBadge label="Downloaded" color="bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300" />;
         buttonText = isIngesting ? "Ingesting..." : "Ingest into AI";
@@ -132,12 +161,19 @@ const ModuleActions: React.FC<{
                     onClick={buttonHandler ?? undefined}
                     disabled={isActionDisabled}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow ${
-                        isActionDisabled && !buttonText.includes('Generate') // Only disable if actively downloading/ingesting
+                        isActionDisabled && !buttonText.includes('View') // Only disable if actively working
                             ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                             : buttonColor
                     }`}
                 >
-                    {buttonText}
+                    {isGenerating ? (
+                        <>
+                            <svg className="animate-spin h-4 w-4 text-white mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            {buttonText}
+                        </>
+                    ) : (
+                        buttonText
+                    )}
                 </button>
             )}
         </div>

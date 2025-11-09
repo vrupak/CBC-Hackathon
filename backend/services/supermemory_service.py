@@ -63,10 +63,6 @@ class SupermemoryService:
                 upload_url = f"{self.base_url}/v3/documents"
                 
                 # Prepare payload according to Supermemory API documentation
-                # content: string (required) - The content to process into a document
-                # containerTag: string (optional) - Single tag to group related memories
-                # metadata: object (optional) - Additional key-value metadata
-                # customId: string (optional) - Your own identifier for this document
                 payload = {
                     "content": content,
                     "containerTag": "uploaded-documents",  # Group all uploaded documents
@@ -85,25 +81,18 @@ class SupermemoryService:
                     payload["metadata"] = filtered_metadata
                 
                 # Add customId using filename (sanitized)
-                # Must contain only alphanumeric characters, hyphens, and underscores
-                # Remove file extension and sanitize
-                base_name = Path(filename).stem  # Get filename without extension
-                # Replace spaces and special characters with hyphens
-                # Keep only alphanumeric, hyphens, and underscores
+                base_name = Path(filename).stem
                 sanitized = re.sub(r'[^a-zA-Z0-9_-]', '-', base_name)
-                # Remove consecutive hyphens
                 sanitized = re.sub(r'-+', '-', sanitized)
-                # Remove leading/trailing hyphens
                 sanitized = sanitized.strip('-')
-                # Ensure we have a valid ID (if empty after sanitization, use a default)
+                
                 if not sanitized:
-                    # Use file_id from metadata if available, otherwise use a timestamp-based ID
                     file_id_from_meta = metadata.get("file_id", "") if metadata else ""
                     if file_id_from_meta:
                         sanitized = f"document-{file_id_from_meta[:8]}"
                     else:
                         sanitized = f"document-{int(time.time())}"
-                # Max 255 characters as per API docs
+                        
                 custom_id = sanitized[:255] if len(sanitized) <= 255 else sanitized[:252] + "..."
                 payload["customId"] = custom_id
                 print(f"[DEBUG] Original filename: {filename}")
@@ -122,7 +111,6 @@ class SupermemoryService:
                 )
                 
                 print(f"[DEBUG] Supermemory response status: {response.status_code}")
-                print(f"[DEBUG] Supermemory response headers: {dict(response.headers)}")
                 
                 try:
                     response_data = response.json()
@@ -163,38 +151,28 @@ class SupermemoryService:
     ) -> Dict[str, Any]:
         """
         Query Supermemory RAG for relevant context
-        
-        Args:
-            query: The search query
-            container_tag: The container to search in (optional, may not be needed)
-            limit: Number of results to return
-            top_k: Alias for limit (backward compatibility)
-            
-        Returns:
-            Relevant context from Supermemory
         """
-        # Use top_k if provided (backward compatibility), otherwise use limit
         if top_k is not None:
             limit = top_k
         
         try:
             async with httpx.AsyncClient() as client:
-                # Based on Supermemory API: POST /search
-                # Payload structure may need adjustment based on actual API requirements
+                # --- FIX: Trying /v3/documents/search path to resolve persistent 404 ---
+                search_url = f"{self.base_url}/v3/documents/search" 
+                
                 payload = {
                     "q": query,
                     "limit": limit
                 }
                 
-                # Add containerTag if the API supports it (using camelCase to match API)
                 if container_tag:
                     payload["containerTag"] = container_tag
                 
-                print(f"[DEBUG] Supermemory search URL: {self.base_url}/search")
+                print(f"[DEBUG] Supermemory search URL: {search_url}")
                 print(f"[DEBUG] Supermemory search payload: {payload}")
                 
                 response = await client.post(
-                    f"{self.base_url}/search",
+                    search_url, 
                     headers=self.headers,
                     json=payload,
                     timeout=30.0
@@ -213,7 +191,8 @@ class SupermemoryService:
             except:
                 error_detail += f": {e.response.text[:500]}"
             print(f"[ERROR] Supermemory search HTTP error: {error_detail}")
-            raise Exception(f"Supermemory search HTTP error: {error_detail}")
+            # Raising the specific error detail to the FastAPI layer
+            raise Exception(f"Supermemory search HTTP error: HTTP {e.response.status_code}: {e.response.reason_phrase}")
         except httpx.HTTPError as e:
             error_msg = f"Supermemory search network error: {str(e)}"
             print(f"[ERROR] {error_msg}")
@@ -222,4 +201,3 @@ class SupermemoryService:
             error_msg = f"Error querying Supermemory: {str(e)}"
             print(f"[ERROR] {error_msg}")
             raise Exception(error_msg)
-

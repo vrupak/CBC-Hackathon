@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field # Import Pydantic BaseModel for POST body
+from pydantic import BaseModel, Field
 import os
 from pathlib import Path
 from typing import Optional, Annotated, List
@@ -14,8 +14,8 @@ from services.supermemory_service import SupermemoryService
 from services.claude_service import ClaudeService 
 from services.db_service import DBService 
 from services.canvas_service import CanvasService 
-from utils.file_processor import extract_text_from_file # CORRECTED IMPORT PATH
-from models import init_db, SessionLocal, Course, Module, DB_PATH # DB_PATH imported
+from utils.file_processor import extract_text_from_file
+from models import init_db, SessionLocal, Course, Module, DB_PATH
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -28,13 +28,11 @@ CANVAS_TOKEN = os.getenv("CANVAS_TOKEN")
 app = FastAPI(title="AI Study Buddy API (Single-User)", version="1.0.0")
 
 # --- FILE PATH CONFIGURATION ---
-# Base directory for all downloaded course files
 DOWNLOAD_BASE_DIR = Path(__file__).parent / "download"
-DOWNLOAD_BASE_DIR.mkdir(parents=True, exist_ok=True) # Ensure base directory exists
+DOWNLOAD_BASE_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- SCHEMA FOR ADDING COURSES ---
 class CourseSelection(BaseModel):
-    # Expects a list of strings, where each string is the Canvas Course ID (e.g., "5001")
     canvas_course_ids: List[str] = Field(..., min_length=1, description="List of Canvas course IDs to add to the local database.")
 
 
@@ -47,7 +45,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create uploads directory if it doesn't exist (Original non-Canvas upload location)
+# Create uploads directory if it doesn't exist
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -57,7 +55,7 @@ _claude_service: Optional[ClaudeService] = None
 _db_service: Optional[DBService] = None
 
 
-# --- DATABASE UTILITY (FOR SCHEMA MIGRATION/RESET) ---
+# --- DATABASE UTILITY ---
 def reset_db_schema():
     """Deletes the existing database file to force schema creation."""
     db_file = Path(DB_PATH.split('sqlite:///')[-1])
@@ -72,7 +70,6 @@ def reset_db_schema():
 
 # --- DEPENDENCY INJECTION: Get DB Session ---
 def get_db():
-    """Dependency to get a SQLAlchemy session for a request."""
     db = SessionLocal()
     try:
         yield db
@@ -81,8 +78,8 @@ def get_db():
 
 DBSession = Annotated[SessionLocal, Depends(get_db)]
 
+# --- DEPENDENCY INJECTION: Get Services ---
 def get_supermemory_service() -> Optional[SupermemoryService]:
-    """Get or initialize Supermemory service"""
     global _supermemory_service
     if _supermemory_service is None:
         try:
@@ -92,25 +89,21 @@ def get_supermemory_service() -> Optional[SupermemoryService]:
     return _supermemory_service
 
 def get_claude_service() -> Optional[ClaudeService]:
-    """Get or initialize Claude service (relies on ANTHROPIC_API_KEY from env)"""
     global _claude_service
     if _claude_service is None:
         try:
-            # Note: API Key is loaded from environment by the service itself
             _claude_service = ClaudeService() 
         except ValueError as e:
             logger.warning(f"Claude service not available: {e}")
     return _claude_service
 
 def get_db_service() -> Optional[DBService]:
-    """Get or initialize DB Service logic helper"""
     global _db_service
     if _db_service is None:
         _db_service = DBService()
     return _db_service
     
 def get_canvas_service(token: str) -> Optional[CanvasService]:
-    """Get or initialize Canvas service"""
     try:
         return CanvasService(token)
     except ValueError as e:
@@ -120,9 +113,7 @@ def get_canvas_service(token: str) -> Optional[CanvasService]:
 # --- UTILITY: Path Sanitization ---
 def sanitize_path_name(name: str) -> str:
     """Sanitizes a string for use as a directory or file name."""
-    # Replace non-alphanumeric, non-space, non-hyphen, non-underscore characters with nothing
     sanitized = re.sub(r'[^\w\s-]', '', name).strip()
-    # Replace spaces with underscores
     sanitized = re.sub(r'[-\s]+', '_', sanitized)
     return sanitized or 'unknown_resource'
 
@@ -145,7 +136,6 @@ async def root():
 async def health(db: DBSession):
     db_status = "unconfigured"
     try:
-        # Check database connection by querying a lightweight table (e.g., Course)
         db.query(Course).first() 
         db_status = "connected"
     except Exception as e:
@@ -159,32 +149,178 @@ async def health(db: DBSession):
         "database_status": db_status 
     }
 
-# Endpoint renamed and simplified - no user context needed
 @app.get("/api/courses") 
 async def get_all_courses(db: DBSession):
     db_service = get_db_service()
     
-    # Fetch all courses (no user filtering)
     courses = db_service.get_all_courses(db)
     
-    # Transform ORM objects into a simple list/dict structure
     response_courses = []
     for course in courses:
         modules = db.query(Module).filter_by(course_id=course.id).all()
         
         response_courses.append({
             "courseName": course.name,
-            "local_course_id": course.id, # Internal PK (1, 2, 3...)
-            "canvas_id": course.canvas_id, # External Canvas ID (5001, 6002...)
+            "local_course_id": course.id,
+            "canvas_id": course.canvas_id,
             "progress": course.progress,
             "total_modules": course.total_modules,
             "module_count": len(modules),
-            "last_upload_filename": "N/A" # Placeholder
+            "last_upload_filename": "N/A"
         })
         
     return {"courses": response_courses, "status": "single-user mode"} 
+    
+# --- FIXED: Endpoint to get a specific course's details and modules ---
+@app.get("/api/courses/{local_course_id}/modules")
+async def get_course_modules_list(
+    local_course_id: int,
+    db: DBSession
+):
+    db_service = get_db_service()
+    
+    course = db.query(Course).filter_by(id=local_course_id).first()
+    if not course:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Course with local ID {local_course_id} not found."
+        )
 
-# --- NEW: Endpoint to fetch courses available for adding ---
+    modules = db.query(Module).filter_by(course_id=local_course_id).all()
+
+    response_modules = []
+    for module in modules:
+        response_modules.append({
+            "id": module.id,
+            "course_id": module.course_id,
+            "name": module.name,
+            "completed": module.completed,
+            "canvas_file_id": module.canvas_file_id,
+            "file_url": module.file_url,
+            "is_downloaded": module.is_downloaded,
+            "is_ingested": module.is_ingested,
+            "has_study_path": module.study_path_json is not None
+        })
+        
+    return JSONResponse(
+        status_code=200,
+        content={
+            "courseName": course.name,
+            "courseId": course.id,
+            "canvasId": course.canvas_id,
+            "modules": response_modules
+        }
+    )
+    
+# --- NEW: Endpoint to get study path JSON for a specific module (Retrieval) ---
+@app.get("/api/llm/modules/{local_module_id}/study-path")
+async def get_module_study_path(
+    local_module_id: int,
+    db: DBSession
+):
+    db_service = get_db_service()
+    
+    # Retrieve the course to get metadata for the frontend response
+    module = db.query(Module).filter_by(id=local_module_id).first()
+    if not module:
+        raise HTTPException(status_code=404, detail=f"Module with ID {local_module_id} not found.")
+
+    study_path_json = module.study_path_json
+    
+    if not study_path_json:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Study path not found for module ID {local_module_id}. Please generate it first."
+        )
+        
+    return JSONResponse(
+        status_code=200,
+        content={
+            "topics": study_path_json,
+            "filename": module.name,
+            "source": f"Course: {module.course.name} - Module: {module.name}" if module.course else "Database Retrieval"
+        }
+    )
+
+# --- NEW: Endpoint to generate study path (LLM call and Persistence) ---
+@app.post("/api/llm/modules/{local_module_id}/generate-topics")
+async def generate_module_topics(
+    local_module_id: int,
+    db: DBSession
+):
+    db_service = get_db_service()
+    supermemory_service = get_supermemory_service()
+    claude_service = get_claude_service()
+    
+    if not claude_service:
+        raise HTTPException(
+            status_code=503,
+            detail="Claude (LLM) service is not configured. Please check ANTHROPIC_API_KEY."
+        )
+        
+    # 1. Retrieve the module and course details
+    module = db.query(Module).filter_by(id=local_module_id).first()
+    if not module:
+        raise HTTPException(status_code=404, detail=f"Module with ID {local_module_id} not found.")
+
+    course = module.course
+        
+    if not module.is_ingested:
+        raise HTTPException(
+            status_code=400, 
+            detail="File has not been ingested into Supermemory yet. Please ingest the file first."
+        )
+    
+    if module.study_path_json:
+        # If path already exists, return it instead of re-generating
+        logger.info(f"Study path already exists for module {local_module_id}. Returning saved path.")
+        return JSONResponse(
+            status_code=200,
+            content={
+                "topics": module.study_path_json,
+                "filename": module.name,
+                "source": f"Course: {course.name} - Module: {module.name}"
+            }
+        )
+
+    try:
+        # 2. Generate RAG Query
+        rag_query = f"Extract a comprehensive learning path including topics and subtopics from the document: {module.name} from course: {course.name}"
+        
+        # 3. Call Claude with RAG context
+        logger.info(f"Generating topics for module {local_module_id} using Claude + RAG...")
+        
+        llm_response = await claude_service.extract_topics_with_rag(
+            query=rag_query,
+            supermemory_service=supermemory_service
+        )
+        
+        raw_topics_json_string = llm_response.get("topics_text")
+        
+        if not raw_topics_json_string:
+            raise Exception("LLM returned no topics content.")
+
+        # 4. Save the raw JSON string to the database
+        db_service.update_module_study_path(db, local_module_id, raw_topics_json_string)
+
+        # 5. Return the raw JSON string to the frontend
+        return JSONResponse(
+            status_code=200,
+            content={
+                "topics": raw_topics_json_string,
+                "filename": module.name,
+                "source": f"Course: {course.name} - Module: {module.name}"
+            }
+        )
+
+    except Exception as e:
+        error_msg = f"An unexpected error occurred during study path generation: {str(e)}"
+        logger.error(f"Study path generation failed for module {local_module_id}: {e}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+# --- Existing Canvas Sync Routes (Kept for completeness) ---
+
 @app.get("/api/canvas/available-courses")
 async def get_available_canvas_courses(db: DBSession):
     db_service = get_db_service()
@@ -201,13 +337,9 @@ async def get_available_canvas_courses(db: DBSession):
         if not canvas_service:
             raise Exception("Canvas Service Initialization failed.")
             
-        # 1. Fetch all active courses from Canvas API
         all_canvas_courses = await canvas_service.get_user_courses()
-        
-        # 2. Get the set of IDs already stored in the local DB
         local_canvas_ids = db_service.get_all_canvas_ids(db)
         
-        # 3. Filter the Canvas courses
         available_courses = []
         for course in all_canvas_courses:
             course_id_str = str(course.get("id"))
@@ -233,7 +365,6 @@ async def get_available_canvas_courses(db: DBSession):
         raise HTTPException(status_code=500, detail=error_msg)
 
 
-# --- NEW: Endpoint to add selected courses to the DB ---
 @app.post("/api/canvas/add-courses")
 async def add_selected_canvas_courses(
     db: DBSession, 
@@ -278,54 +409,6 @@ async def add_selected_canvas_courses(
         content={"message": f"Successfully added {imported_count} new course(s) to the local database."}
     )
 
-
-# --- Original fetch-canvas-courses endpoint (now renamed to be explicit) ---
-@app.post("/api/canvas/sync-all")
-async def sync_all_canvas_courses(db: DBSession):
-    db_service = get_db_service()
-    
-    canvas_token = CANVAS_TOKEN
-    if not canvas_token:
-        raise HTTPException(
-            status_code=500,
-            detail="CANVAS_TOKEN environment variable not set. Cannot connect to Canvas."
-        )
-    
-    try:
-        canvas_service = get_canvas_service(canvas_token)
-        if not canvas_service:
-            raise Exception("Canvas Service Initialization failed.")
-            
-        canvas_courses = await canvas_service.get_user_courses()
-        
-        imported_count = 0
-        for canvas_course in canvas_courses:
-            course_name = canvas_course.get("name")
-            course_id = str(canvas_course.get("id"))
-            
-            if course_name and course_id:
-                db_service.get_or_create_course_from_canvas(
-                    db, 
-                    course_name=course_name, 
-                    canvas_id=course_id
-                )
-                imported_count += 1
-
-        return JSONResponse(
-            status_code=200,
-            content={"message": f"Successfully fetched and processed {imported_count} courses from Canvas."}
-        )
-    
-    except httpx.HTTPStatusError as e:
-        error_msg = f"Canvas API Error: HTTP {e.response.status_code}. Please check your CANVAS_TOKEN validity."
-        raise HTTPException(status_code=400, detail=error_msg)
-    except Exception as e:
-        error_msg = f"An unexpected error occurred during Canvas sync: {str(e)}"
-        logger.error(f"Canvas sync failed: {e}")
-        raise HTTPException(status_code=500, detail=error_msg)
-
-
-# --- NEW: Endpoint to sync files for a specific course (from previous response) ---
 @app.post("/api/canvas/courses/{local_course_id}/sync-files")
 async def sync_course_files(
     local_course_id: int,
@@ -379,7 +462,6 @@ async def sync_course_files(
         logger.error(f"Canvas file sync failed for course {local_course_id}: {e}")
         raise HTTPException(status_code=500, detail=error_msg)
 
-# --- NEW: Endpoint to download a specific module file ---
 @app.post("/api/canvas/modules/{local_module_id}/download")
 async def download_module_file(
     local_module_id: int,
@@ -387,7 +469,6 @@ async def download_module_file(
 ):
     db_service = get_db_service()
     
-    # 1. Retrieve the module and course details from the database
     module = db.query(Module).filter_by(id=local_module_id).first()
     if not module:
         raise HTTPException(status_code=404, detail=f"Module with ID {local_module_id} not found.")
@@ -413,15 +494,12 @@ async def download_module_file(
         )
 
     try:
-        # 2. Determine the save path: backend/download/{sanitized_course_name}/{module_name}
         course_folder_name = sanitize_path_name(course.name)
-        file_path_name = module.name # Use the display name provided by Canvas
+        file_path_name = module.name
         
-        # Construct the final absolute path
         local_dir = DOWNLOAD_BASE_DIR / course_folder_name
         local_file_path = local_dir / file_path_name
 
-        # 3. Download the file
         canvas_service = get_canvas_service(canvas_token)
         if not canvas_service:
             raise Exception("Canvas Service Initialization failed.")
@@ -431,7 +509,6 @@ async def download_module_file(
             save_path=local_file_path
         )
 
-        # 4. Update the database status
         db_service.update_module_download_status(db, local_module_id, is_downloaded=True)
 
         return JSONResponse(
@@ -445,18 +522,15 @@ async def download_module_file(
     except httpx.HTTPStatusError as e:
         error_msg = f"File Download Error: HTTP {e.response.status_code}. The secure URL may have expired."
         logger.error(f"File download failed for module {local_module_id}: {e}")
-        # If download fails, ensure status is False
         db_service.update_module_download_status(db, local_module_id, is_downloaded=False)
         raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
         error_msg = f"An unexpected error occurred during file download: {str(e)}: {e}"
         logger.error(f"File download failed for module {local_module_id}: {e}")
-        # If download fails, ensure status is False
         db_service.update_module_download_status(db, local_module_id, is_downloaded=False)
         raise HTTPException(status_code=500, detail=error_msg)
 
 
-# --- NEW: Endpoint to ingest a specific module file into Supermemory ---
 @app.post("/api/canvas/modules/{local_module_id}/ingest")
 async def ingest_module_file(
     local_module_id: int,
@@ -471,7 +545,6 @@ async def ingest_module_file(
             detail="Supermemory service is not configured. Please check SUPERMEMORY_API_KEY."
         )
     
-    # 1. Retrieve the module and course details from the database
     module = db.query(Module).filter_by(id=local_module_id).first()
     if not module:
         raise HTTPException(status_code=404, detail=f"Module with ID {local_module_id} not found.")
@@ -492,7 +565,6 @@ async def ingest_module_file(
             content={"message": f"File '{module.name}' is already ingested into Supermemory."}
         )
 
-    # 2. Determine the local path
     course_folder_name = sanitize_path_name(course.name)
     local_file_path = DOWNLOAD_BASE_DIR / course_folder_name / module.name
     
@@ -503,14 +575,12 @@ async def ingest_module_file(
         )
 
     try:
-        # 3. Extract text content from the local file
         logger.info(f"Extracting text from: {local_file_path}")
         document_content = await extract_text_from_file(local_file_path)
         
         if not document_content:
              raise Exception("Extracted document content was empty.")
 
-        # 4. Ingest document into Supermemory
         metadata = {
             "course_name": course.name,
             "canvas_course_id": course.canvas_id,
@@ -526,7 +596,6 @@ async def ingest_module_file(
             metadata=metadata
         )
 
-        # 5. Update the database status
         db_service.update_module_ingestion_status(db, local_module_id, is_ingested=True)
 
         return JSONResponse(
@@ -540,7 +609,6 @@ async def ingest_module_file(
     except Exception as e:
         error_msg = f"An unexpected error occurred during file ingestion: {str(e)}"
         logger.error(f"File ingestion failed for module {local_module_id}: {e}")
-        # If ingestion fails, ensure status is False
         db_service.update_module_ingestion_status(db, local_module_id, is_ingested=False)
         raise HTTPException(status_code=500, detail=error_msg)
 
@@ -556,49 +624,6 @@ async def upload_material(
     raise HTTPException(
         status_code=403,
         detail="File upload is temporarily disabled as the system transitions to Canvas integration."
-    )
-
-@app.get("/api/courses/{local_course_id}/modules")
-async def get_course_modules_list(
-    local_course_id: int,
-    db: DBSession
-):
-    db_service = get_db_service()
-    
-    # 1. Fetch the Course record
-    course = db.query(Course).filter_by(id=local_course_id).first()
-    if not course:
-        # Returns a 404 if the course ID doesn't exist locally
-        raise HTTPException(
-            status_code=404,
-            detail=f"Course with local ID {local_course_id} not found."
-        )
-
-    # 2. Fetch all Module records associated with the Course
-    modules = db.query(Module).filter_by(course_id=local_course_id).all()
-
-    # 3. Serialize the data to match the frontend's expected structure
-    response_modules = []
-    for module in modules:
-        response_modules.append({
-            "id": module.id,
-            "course_id": module.course_id,
-            "name": module.name,
-            "completed": module.completed,
-            "canvas_file_id": module.canvas_file_id,
-            "file_url": module.file_url,
-            "is_downloaded": module.is_downloaded,
-            "is_ingested": module.is_ingested,
-        })
-        
-    return JSONResponse(
-        status_code=200,
-        content={
-            "courseName": course.name,
-            "courseId": course.id,
-            "canvasId": course.canvas_id,
-            "modules": response_modules
-        }
     )
 
 if __name__ == "__main__":
