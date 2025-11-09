@@ -1,8 +1,7 @@
 import type { Route } from "./+types/study-path";
 import { Layout } from "../components/Layout";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useLocation } from "react-router";
-import { saveStudyProgress } from "../utils/api";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -89,38 +88,6 @@ export default function StudyPath() {
 
   // Get file ID from session storage
   const fileId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('uploadedFileId') : null;
-
-  // Auto-save progress to Supermemory whenever topics change
-  useEffect(() => {
-    const saveProgress = async () => {
-      if (!fileId || !filename) return;
-
-      try {
-        const totalSubtopics = topics.reduce((acc, topic) => acc + topic.subtopics.length, 0);
-        const completedSubtopics = topics.reduce(
-          (acc, topic) => acc + topic.subtopics.filter(st => st.completed).length,
-          0
-        );
-        const overallProgress = totalSubtopics > 0 ? (completedSubtopics / totalSubtopics) * 100 : 0;
-
-        await saveStudyProgress({
-          file_id: fileId,
-          filename: filename,
-          topics: topics,
-          overall_progress: overallProgress,
-          last_updated: new Date().toISOString(),
-        });
-
-        console.log('[StudyPath] Progress saved to Supermemory');
-      } catch (error) {
-        console.error('[StudyPath] Failed to save progress:', error);
-      }
-    };
-
-    // Debounce the save to avoid too many requests
-    const timer = setTimeout(saveProgress, 1000);
-    return () => clearTimeout(timer);
-  }, [topics, fileId, filename]);
 
   const toggleTopic = (topicId: number) => {
     setExpandedTopic(expandedTopic === topicId ? null : topicId);

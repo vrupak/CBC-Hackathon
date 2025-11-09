@@ -329,7 +329,7 @@ When answering, provide accurate, concise, and educational responses."""
         elif not context or len(context.strip()) < 50:
             print(f"[INFO] No context from Supermemory")
 
-        # Build system prompt with proper attribution
+        # Build system prompt
         if context_used:
             system_prompt = f"""You are an intelligent study assistant.
 A user has uploaded study materials and is asking questions about them.
@@ -339,40 +339,13 @@ Here is the relevant study material from their documents:
 {final_context}
 </study_material>
 
-IMPORTANT INSTRUCTIONS:
-1. First, check if the study material contains relevant information for the user's question.
-2. If YES: Prioritize using the study material to answer the question. You may supplement with additional knowledge if needed.
-3. If NO: Acknowledge that the material doesn't cover this topic, then provide information from your general knowledge.
-4. Always be clear about whether you're using the uploaded material or general knowledge.
-5. Be concise, educational, and adapt explanations to the user's understanding level.
-6. CRITICAL: Return your response in PLAIN TEXT format only. DO NOT use markdown formatting. DO NOT use asterisks, hashtags, backticks, or any other markdown syntax. Use simple line breaks for paragraphs.
-7. IMPORTANT: After your explanation, include a "Sources & Resources:" section with:
-   - Any relevant URLs (as plain URLs on their own lines so they become clickable)
-   - At least one relevant YouTube video link that would help the user learn more about this topic
-   Format this section at the end like:
+Please use this study material to answer the user's question. If the study material contains relevant information, prioritize using it in your answer.
+If the material doesn't have what's needed, supplement with your knowledge.
 
-   Sources & Resources:
-   https://example.com/relevant-article
-   https://youtube.com/watch?v=relevant-video"""
-        elif web_search_used:
-            system_prompt = f"""You are an intelligent study assistant.
-The user asked about a topic NOT covered in their uploaded study materials.
-You have searched the web and found relevant information below.
+IMPORTANT: Return your response in PLAIN TEXT format only. DO NOT use markdown formatting. DO NOT use asterisks, hashtags, backticks, or any other markdown syntax. Use simple line breaks for paragraphs.
 
-IMPORTANT:
-- First acknowledge that this information was NOT in the uploaded material
-- Then explain the answer based on web search results
-- Be clear that this is from web sources, not the uploaded material
-
-Web search results:
-<web_results>
-{final_context}
-</web_results>
-
-Provide a clear, educational response that acknowledges the material gap.
-CRITICAL: Return your response in PLAIN TEXT format only. DO NOT use markdown formatting. DO NOT use asterisks, hashtags, backticks, or any other markdown syntax. Use simple line breaks for paragraphs.
 IMPORTANT: After your explanation, include a "Sources & Resources:" section with:
-- The web sources you used (as plain URLs on their own lines so they become clickable)
+- Relevant educational URLs (as plain URLs on their own lines so they become clickable)
 - At least one relevant YouTube video link that would help the user learn more about this topic
 Format this section at the end like:
 
@@ -380,11 +353,12 @@ Sources & Resources:
 https://example.com/relevant-article
 https://youtube.com/watch?v=relevant-video"""
         else:
-            system_prompt = """You are an AI Study Buddy, a helpful educational assistant.
-You help students understand concepts, answer questions about their study materials, and provide explanations in a clear and engaging way.
-Be supportive, patient, and adapt your explanations to the user's understanding level.
-When answering, provide accurate, concise, and educational responses.
-CRITICAL: Return your response in PLAIN TEXT format only. DO NOT use markdown formatting. DO NOT use asterisks, hashtags, backticks, or any other markdown syntax. Use simple line breaks for paragraphs.
+            system_prompt = """You are an intelligent study assistant.
+Provide accurate and helpful answers based on your knowledge.
+Be clear, concise, and educational in your responses.
+
+IMPORTANT: Return your response in PLAIN TEXT format only. DO NOT use markdown formatting. DO NOT use asterisks, hashtags, backticks, or any other markdown syntax. Use simple line breaks for paragraphs.
+
 IMPORTANT: After your explanation, include a "Sources & Resources:" section with:
 - Relevant educational URLs (as plain URLs on their own lines so they become clickable)
 - At least one relevant YouTube video link that would help the user learn more about this topic

@@ -20,6 +20,7 @@ interface Message {
   sender: "user" | "ai";
   timestamp: Date;
   usedWebSearch?: boolean;
+  contextUsed?: boolean;
   sources?: string[];
 }
 
@@ -70,7 +71,7 @@ export default function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load file_id and messages from sessionStorage after hydration (client-side only)
+  // Load file_id, messages, and input value from sessionStorage after hydration (client-side only)
   useEffect(() => {
     setIsHydrated(true);
     if (typeof sessionStorage !== "undefined") {
@@ -96,6 +97,13 @@ export default function Chat() {
           console.error("[Chat] Failed to parse stored messages:", error);
         }
       }
+
+      // Restore input value from sessionStorage
+      const storedInput = sessionStorage.getItem("chat_input");
+      if (storedInput) {
+        setInputValue(storedInput);
+        console.log(`[Chat] Restored input value from sessionStorage`);
+      }
     }
   }, []);
 
@@ -105,6 +113,17 @@ export default function Chat() {
       sessionStorage.setItem("chat_messages", JSON.stringify(messages));
     }
   }, [messages, isHydrated]);
+
+  // Save input value to sessionStorage whenever it changes
+  useEffect(() => {
+    if (isHydrated && typeof sessionStorage !== "undefined") {
+      if (inputValue.trim()) {
+        sessionStorage.setItem("chat_input", inputValue);
+      } else {
+        sessionStorage.removeItem("chat_input");
+      }
+    }
+  }, [inputValue, isHydrated]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -126,11 +145,16 @@ export default function Chat() {
 
     setMessages((prev) => [...prev, userMessage]);
     setInputValue("");
+    // Clear stored input from sessionStorage
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.removeItem("chat_input");
+    }
     setIsLoading(true);
 
     const aiMessageId = messages.length + 2;
     let fullText = "";
     let usedWebSearch = false;
+    let contextUsed = false;
 
     try {
       // Build conversation history for context (convert to API format)
@@ -148,6 +172,7 @@ export default function Chat() {
         sender: "ai",
         timestamp: new Date(),
         usedWebSearch: false,
+        contextUsed: false,
       }]);
 
       // Stream the response with forced synchronous updates
@@ -157,10 +182,13 @@ export default function Chat() {
 
       for await (const chunk of stream) {
         if (chunk.metadata) {
-          // Capture web search metadata
+          // Capture metadata
           console.log("[STREAM] Metadata:", chunk.metadata);
           if (chunk.metadata.web_search_used) {
             usedWebSearch = true;
+          }
+          if (chunk.metadata.context_used) {
+            contextUsed = true;
           }
         } else if (chunk.text) {
           fullText += chunk.text;
@@ -174,7 +202,7 @@ export default function Chat() {
               setMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === aiMessageId
-                    ? { ...msg, text: fullText, usedWebSearch }
+                    ? { ...msg, text: fullText, usedWebSearch, contextUsed }
                     : msg
                 )
               );
@@ -190,7 +218,7 @@ export default function Chat() {
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === aiMessageId
-                  ? { ...msg, text: fullText, usedWebSearch }
+                  ? { ...msg, text: fullText, usedWebSearch, contextUsed }
                   : msg
               )
             );
@@ -208,7 +236,7 @@ export default function Chat() {
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === aiMessageId
-              ? { ...msg, text: fullText, usedWebSearch }
+              ? { ...msg, text: fullText, usedWebSearch, contextUsed }
               : msg
           )
         );
@@ -313,22 +341,45 @@ export default function Chat() {
                       </div>
                     )}
                     <div className="flex-1">
-                      {message.usedWebSearch && message.sender === "ai" && (
-                        <div className="inline-flex items-center gap-1 mb-2 px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-md text-xs font-medium">
-                          <svg
-                            className="w-3 h-3"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                            />
-                          </svg>
-                          Web search used
+                      {/* Show badges for AI messages - removed amber warning badge */}
+                      {message.sender === "ai" && (
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {message.usedWebSearch && (
+                            <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-md text-xs font-medium">
+                              <svg
+                                className="w-3 h-3"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                                />
+                              </svg>
+                              Web search used
+                            </div>
+                          )}
+                          {message.contextUsed && (
+                            <div className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-md text-xs font-medium">
+                              <svg
+                                className="w-3 h-3"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                />
+                              </svg>
+                              Using study materials
+                            </div>
+                          )}
                         </div>
                       )}
                       <p className="text-sm whitespace-pre-wrap break-words">

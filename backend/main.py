@@ -276,7 +276,13 @@ async def chat_stream(request: ChatRequest):
         if request.file_id and supermemory_service:
             try:
                 print(f"[INFO] Retrieving context from Supermemory for file_id: {request.file_id}")
-                rag_results = await supermemory_service.query(request.message, limit=3)
+                # Increase retry count and delay to give documents more time to index
+                rag_results = await supermemory_service.query(
+                    request.message,
+                    limit=3,
+                    retry_count=5,  # Increased from 3
+                    retry_delay=2.0  # Increased from 1.0
+                )
 
                 # Extract context from results
                 if isinstance(rag_results, dict):
@@ -588,123 +594,33 @@ class StudyProgress(BaseModel):
 @app.post("/api/study-progress/save")
 async def save_study_progress(progress: StudyProgress):
     """
-    Save study progress to Supermemory for persistence across sessions
+    Study progress endpoint (disabled - no longer saving to Supermemory)
 
-    This creates a special progress document that tracks the user's
-    study completion status, allowing them to resume where they left off.
+    Progress is now stored locally in sessionStorage only.
+    This endpoint remains for backward compatibility.
     """
-    try:
-        supermemory_service = get_supermemory_service()
-        if not supermemory_service:
-            return JSONResponse(
-                status_code=503,
-                content={"error": "Supermemory service not available"}
-            )
-
-        print(f"[INFO] Saving study progress for file_id: {progress.file_id}")
-
-        # Format progress data as structured text
-        progress_text = f"""# Study Progress
-
-**File:** {progress.filename}
-**Last Updated:** {progress.last_updated}
-**Overall Progress:** {progress.overall_progress:.1f}%
-
-## Topics Progress
-
-"""
-
-        if progress.topics:
-            for topic in progress.topics:
-                progress_text += f"### {topic.get('title', 'Topic')}\n"
-                progress_text += f"- Status: {topic.get('status', 'pending')}\n"
-
-                if topic.get('subtopics'):
-                    completed = sum(1 for st in topic['subtopics'] if st.get('completed', False))
-                    total = len(topic['subtopics'])
-                    progress_text += f"- Progress: {completed}/{total} subtopics completed\n"
-
-                progress_text += "\n"
-
-        # Save to Supermemory
-        result = await supermemory_service.ingest_document(
-            content=progress_text,
-            filename=f"progress-{progress.file_id[:8]}.md",
-            metadata={
-                "type": "study_progress",
-                "file_id": progress.file_id,
-                "filename": progress.filename,
-                "overall_progress": str(progress.overall_progress),
-                "timestamp": progress.last_updated,
-            }
-        )
-
-        print(f"[INFO] Study progress saved: {result}")
-        return {
-            "success": True,
-            "message": "Study progress saved successfully",
-            "memory_id": result.get("id")
-        }
-
-    except Exception as e:
-        print(f"[ERROR] Failed to save study progress: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save study progress: {str(e)}"
-        )
+    # No-op: Progress is stored locally in sessionStorage only
+    print(f"[INFO] Study progress save request received for file_id: {progress.file_id} (not saving to Supermemory)")
+    return {
+        "success": True,
+        "message": "Study progress tracked locally"
+    }
 
 @app.get("/api/study-progress/load/{file_id}")
 async def load_study_progress(file_id: str):
     """
-    Load study progress from Supermemory for a specific file
+    Load study progress endpoint (disabled - no longer loading from Supermemory)
 
-    Returns the saved progress document if it exists, allowing users
-    to resume from where they left off.
+    Progress is now stored locally in sessionStorage only.
+    This endpoint remains for backward compatibility.
     """
-    try:
-        supermemory_service = get_supermemory_service()
-        if not supermemory_service:
-            return JSONResponse(
-                status_code=503,
-                content={"error": "Supermemory service not available"}
-            )
-
-        print(f"[INFO] Loading study progress for file_id: {file_id}")
-
-        # Query for progress documents related to this file
-        search_results = await supermemory_service.query(
-            query=f"study progress {file_id}",
-            limit=5
-        )
-
-        if search_results and search_results.get("results"):
-            # Find the most recent progress document
-            progress_docs = [
-                r for r in search_results["results"]
-                if "progress" in r.get("content", "").lower()
-            ]
-
-            if progress_docs:
-                print(f"[INFO] Found {len(progress_docs)} progress documents")
-                return {
-                    "success": True,
-                    "progress_data": progress_docs[0],
-                    "message": "Study progress loaded successfully"
-                }
-
-        return {
-            "success": False,
-            "message": "No previous progress found for this file",
-            "progress_data": None
-        }
-
-    except Exception as e:
-        print(f"[ERROR] Failed to load study progress: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e),
-            "progress_data": None
-        }
+    # No-op: Progress is stored locally in sessionStorage only
+    print(f"[INFO] Study progress load request received for file_id: {file_id} (not loading from Supermemory)")
+    return {
+        "success": False,
+        "message": "Progress is tracked locally only",
+        "progress_data": None
+    }
 
 @app.get("/api/materials/list")
 async def list_uploaded_materials():
