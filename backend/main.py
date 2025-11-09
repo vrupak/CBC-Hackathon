@@ -424,13 +424,22 @@ async def chat_stream(message: dict):
                                 for item in search_results["data"]
                             ])
 
-                    if supermemory_context:
+                    # Only consider context "found" if it's substantial (>= 100 chars)
+                    # This prevents showing "Using study materials" for brief/irrelevant matches
+                    MIN_CONTEXT_LENGTH = 100
+
+                    if supermemory_context and len(supermemory_context.strip()) >= MIN_CONTEXT_LENGTH:
                         print(f"[INFO] Found Supermemory context: {len(supermemory_context)} characters")
                         # Yield metadata about context
                         yield json.dumps({"metadata": {"context_used": True, "web_search_used": False}}) + "\n"
                     else:
-                        print("[INFO] No Supermemory context found, will use general knowledge")
+                        if supermemory_context:
+                            print(f"[INFO] Found minimal context ({len(supermemory_context)} chars), treating as no context")
+                        else:
+                            print("[INFO] No Supermemory context found, will use general knowledge")
                         yield json.dumps({"metadata": {"context_used": False, "web_search_used": False}}) + "\n"
+                        # Clear context so Claude doesn't use irrelevant snippets
+                        supermemory_context = ""
 
                 except Exception as e:
                     print(f"[WARN] Supermemory search failed: {e}")
