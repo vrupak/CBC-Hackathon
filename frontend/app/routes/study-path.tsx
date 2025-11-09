@@ -67,16 +67,17 @@ const loadTopicsFromSession = (): Topic[] => {
 
 export default function StudyPath() {
   const location = useLocation();
-  
+
   // 1. Get initial topics from navigation state or session storage
-  const initialTopicsFromState = (location.state as { topics?: Topic[] })?.topics;
-  
-  const initialTopics: Topic[] = initialTopicsFromState 
-    ? initialTopicsFromState 
+  const locationState = location.state as any;
+  const initialTopicsFromState = locationState?.topics;
+
+  const initialTopics: Topic[] = initialTopicsFromState
+    ? initialTopicsFromState
     : loadTopicsFromSession();
-    
+
   // Also retrieve the filename for display
-  const filename = (location.state as { filename?: string })?.filename || (
+  const filename = locationState?.filename || (
     typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('filename') : "Uploaded Material"
   ) || "Uploaded Material";
 
@@ -395,10 +396,10 @@ export default function StudyPath() {
         ) : (
           <div className="text-center p-12 bg-white dark:bg-gray-800 rounded-xl shadow-lg">
              <p className="text-xl font-semibold text-gray-700 dark:text-gray-300">
-                {topics[0].title === "Loading..." ? "Loading Study Path..." : "No Study Path Available."}
+                {topics && topics.length > 0 && topics[0]?.title === "Loading..." ? "Loading Study Path..." : "No Study Path Available."}
             </p>
             <p className="text-gray-500 dark:text-gray-400 mt-2">
-                {topics[0].description}
+                {topics && topics.length > 0 && topics[0]?.description ? topics[0].description : "Please go back to the Home page and upload a study material to generate a path."}
             </p>
           </div>
         )}

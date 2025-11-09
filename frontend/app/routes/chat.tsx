@@ -17,6 +17,7 @@ interface Message {
   text: string;
   sender: "user" | "ai";
   timestamp: Date;
+  conversationId?: string;
 }
 
 // Mock data for quick topic selection
@@ -27,15 +28,65 @@ const quickTopics = [
   "What's the difference between classification and regression?",
 ];
 
+// Helper function to render text with clickable links
+const renderMessageWithLinks = (text: string) => {
+  // Regex to find URLs (http, https, www, etc.)
+  const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
+
+  const parts = text.split(urlRegex);
+
+  return parts.map((part, index) => {
+    if (urlRegex.test(part)) {
+      // It's a URL
+      let url = part;
+      if (!url.startsWith('http')) {
+        url = 'https://' + url;
+      }
+
+      return (
+        <a
+          key={index}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-500 dark:text-blue-400 hover:underline cursor-pointer"
+        >
+          {part}
+        </a>
+      );
+    }
+
+    return part;
+  });
+};
+
 export default function Chat() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 1,
-      text: "Hello! I'm your AI Study Buddy. How can I help you today? You can ask me questions about your study materials, or select a topic you'd like to learn more about.",
-      sender: "ai",
-      timestamp: new Date(),
-    },
-  ]);
+  // Load chat history from sessionStorage or use default
+  const loadChatHistory = () => {
+    if (typeof sessionStorage !== 'undefined') {
+      const saved = sessionStorage.getItem('chatHistory');
+      if (saved) {
+        try {
+          return JSON.parse(saved).map((msg: any) => ({
+            ...msg,
+            timestamp: new Date(msg.timestamp),
+          }));
+        } catch (e) {
+          console.error("Failed to load chat history:", e);
+        }
+      }
+    }
+    return [
+      {
+        id: 1,
+        text: "Hello! I'm your AI Study Buddy. How can I help you today? You can ask me questions about your study materials, or select a topic you'd like to learn more about.",
+        sender: "ai" as const,
+        timestamp: new Date(),
+      },
+    ];
+  };
+
+  const [messages, setMessages] = useState<Message[]>(loadChatHistory());
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -44,6 +95,13 @@ export default function Chat() {
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
+
+  // Save chat history to sessionStorage whenever messages change
+  useEffect(() => {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem('chatHistory', JSON.stringify(messages));
+    }
+  }, [messages]);
 
   useEffect(() => {
     scrollToBottom();
@@ -63,17 +121,132 @@ export default function Chat() {
     setInputValue("");
     setIsLoading(true);
 
-    // Simulate AI response (replace with actual API call later)
-    setTimeout(() => {
+    try {
+      const conversationId = crypto.randomUUID();
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
+
+      // Create a placeholder AI message that will be updated with streamed text
+      const aiMessageId = messages.length + 2;
       const aiMessage: Message = {
-        id: messages.length + 2,
-        text: `I understand you're asking about "${text}". In a real implementation, this would be an AI-generated response based on your study materials. The response would be contextual, detailed, and tailored to your understanding level.`,
+        id: aiMessageId,
+        text: "",
+        sender: "ai",
+        timestamp: new Date(),
+        conversationId,
+      };
+
+      setMessages((prev) => [...prev, aiMessage]);
+
+      // Connect to streaming endpoint
+      const response = await fetch(`${apiBaseUrl}/chat/stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: text.trim(),
+          conversation_id: conversationId,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.statusText}`);
+      }
+
+      // Read the response as a text stream
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Failed to get response reader");
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        // Decode chunk and add to buffer
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE events
+        const lines = buffer.split("\n");
+        buffer = lines[lines.length - 1]; // Keep incomplete line in buffer
+
+        for (let i = 0; i < lines.length - 1; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+
+          if (line.startsWith("data: ")) {
+            try {
+              const jsonStr = line.substring(6);
+              const event = JSON.parse(jsonStr);
+
+              if (event.type === "text" && event.content) {
+                // Update the AI message with streamed text
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === aiMessageId
+                      ? { ...msg, text: msg.text + event.content }
+                      : msg
+                  )
+                );
+              } else if (event.type === "end") {
+                // Clean up markdown formatting from the final message
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === aiMessageId
+                      ? {
+                          ...msg,
+                          text: msg.text
+                            .replace(/\*\*/g, "") // Remove bold markers (**)
+                            .replace(/#{1,6}\s+/g, "") // Remove heading markers (# ## ###, etc.)
+                            .replace(/^-\s+/gm, "• ") // Convert list markers
+                        }
+                      : msg
+                  )
+                );
+              } else if (event.type === "error") {
+                setIsLoading(false);
+                throw new Error(event.message || "Unknown streaming error");
+              }
+            } catch (e) {
+              console.error("Failed to parse SSE event:", line, e);
+            }
+          }
+        }
+      }
+
+      // Final decoder flush
+      buffer += decoder.decode();
+      if (buffer.trim().startsWith("data: ")) {
+        try {
+          const jsonStr = buffer.trim().substring(6);
+          const event = JSON.parse(jsonStr);
+          if (event.type === "text" && event.content) {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === aiMessageId
+                  ? { ...msg, text: msg.text + event.content }
+                  : msg
+              )
+            );
+          }
+        } catch (e) {
+          console.error("Failed to parse final SSE event:", buffer, e);
+        }
+      }
+    } catch (error) {
+      console.error("Chat error:", error);
+      const errorMessage: Message = {
+        id: messages.length + 3,
+        text: `Sorry, I encountered an error: ${error instanceof Error ? error.message : "Unknown error"}. Please try again.`,
         sender: "ai",
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, aiMessage]);
+      setMessages((prev) => [...prev, errorMessage]);
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -162,7 +335,7 @@ export default function Chat() {
                     )}
                     <div className="flex-1">
                       <p className="text-sm whitespace-pre-wrap break-words">
-                        {message.text}
+                        {renderMessageWithLinks(message.text)}
                       </p>
                       <p
                         className={`text-xs mt-1 ${
