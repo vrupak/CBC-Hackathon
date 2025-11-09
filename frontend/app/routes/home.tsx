@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate } from "react-router";
 import { uploadMaterial } from "../utils/api";
+import { CourseCards } from '../components/CourseCards';
 
 // Define the expected structure for the frontend
 interface TopicData {
@@ -273,6 +274,12 @@ export default function Home() {
             study path, understand complex concepts, and ace your exams.
           </p>
         </div>
+
+        {/* --- NEW: Course Cards Section --- */}
+        <CourseCards /> 
+        {/* --- END NEW --- */}
+
+        <hr className="my-12 border-gray-200 dark:border-gray-700" /> {/* Added separator */}
 
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 mb-8">
           <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6">
