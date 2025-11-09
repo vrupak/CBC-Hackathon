@@ -157,8 +157,7 @@ class SupermemoryService:
         
         try:
             async with httpx.AsyncClient() as client:
-                # --- FIX: Trying /v3/documents/search path to resolve persistent 404 ---
-                search_url = f"{self.base_url}/v3/documents/search" 
+                search_url = f"{self.base_url}/v3/search"
                 
                 payload = {
                     "q": query,
