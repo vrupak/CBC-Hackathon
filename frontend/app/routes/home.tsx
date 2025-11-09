@@ -42,7 +42,7 @@ export default function Home() {
         <hr className="my-12 border-gray-200 dark:border-gray-700" /> {/* Added separator */}
 
         {/* --- Upload Form (NEW COMPONENT) --- */}
-        <UploadForm />
+        {/* <UploadForm /> */}
         
         {/* Removed button logic which is now inside UploadForm */}
 
