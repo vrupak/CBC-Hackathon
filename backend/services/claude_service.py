@@ -159,10 +159,17 @@ JSON Schema:
             if isinstance(rag_context, dict):
                 # Handle different possible response structures
                 if "results" in rag_context:
-                    context_text = "\n\n".join([
-                        str(result.get("content", result.get("text", "")))
-                        for result in rag_context["results"]
-                    ])
+                    # Each result has a 'chunks' array with content
+                    for result in rag_context["results"]:
+                        if "chunks" in result and isinstance(result["chunks"], list):
+                            for chunk in result["chunks"]:
+                                if "content" in chunk:
+                                    context_text += str(chunk["content"]) + "\n\n"
+                        # Fallback: try to get content directly from result
+                        elif "content" in result:
+                            context_text += str(result["content"]) + "\n\n"
+                        elif "text" in result:
+                            context_text += str(result["text"]) + "\n\n"
                 elif "content" in rag_context:
                     context_text = str(rag_context["content"])
                 elif "data" in rag_context:
