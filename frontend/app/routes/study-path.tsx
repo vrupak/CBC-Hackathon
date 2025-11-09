@@ -68,17 +68,17 @@ const loadTopicsFromSession = (): Topic[] => {
 
 export default function StudyPath() {
   const location = useLocation();
-  
+
   // 1. Get initial topics from navigation state or session storage
-  const initialTopicsFromState = (location.state as { topics?: Topic[] })?.topics;
-  
-  const initialTopics: Topic[] = initialTopicsFromState 
-    ? initialTopicsFromState 
+  const initialTopicsFromState = (location.state as any)?.topics;
+
+  const initialTopics: Topic[] = initialTopicsFromState && Array.isArray(initialTopicsFromState) && initialTopicsFromState.length > 0
+    ? initialTopicsFromState
     : loadTopicsFromSession();
-    
+
   // Also retrieve the filename for display
-  const filename = (location.state as { filename?: string })?.filename || (
-    typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('filename') : "Uploaded Material"
+  const filename = (location.state as any)?.filename || (
+    typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('filename') : null
   ) || "Uploaded Material";
   
   // --- NEW: Get Module ID for persisting updates ---
@@ -90,8 +90,11 @@ export default function StudyPath() {
   
   // Default to expanding the first active topic
   const [expandedTopic, setExpandedTopic] = useState<number | null>(
-    topics.length > 0 && topics[0].id !== 0 ? topics[0].id : null
+    topics && topics.length > 0 && topics[0] && topics[0].id !== 0 ? topics[0].id : null
   );
+
+  // Get file ID from session storage
+  const fileId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('uploadedFileId') : null;
 
   const toggleTopic = (topicId: number) => {
     setExpandedTopic(expandedTopic === topicId ? null : topicId);
@@ -114,12 +117,19 @@ export default function StudyPath() {
 
         if (completedCount === totalCount) {
           newStatus = 'completed';
-          // NOTE: The logic to auto-start the NEXT topic is removed to support non-sequential learning.
-          // The status update logic remains to correctly show the current topic's progress.
+          // Find the next topic and set it to 'in-progress'
+          const nextTopicIndex = topics.findIndex(t => t.id === topicId) + 1;
+          if (nextTopicIndex < topics.length) {
+            setTopics(prevTopics => prevTopics.map((t, index) => {
+              if (index === nextTopicIndex && t.status === 'pending') {
+                return { ...t, status: 'in-progress' };
+              }
+              return t;
+            }));
+          }
         } else if (completedCount > 0) {
           newStatus = 'in-progress';
         } else {
-          // If all subtopics are unchecked, set status back to 'pending'
           newStatus = 'pending';
         }
         
@@ -132,7 +142,6 @@ export default function StudyPath() {
       return topic;
     });
 
-    // Update the current set of topics 
     setTopics(newTopics);
     
     // Persist the updated topics to session storage
@@ -283,9 +292,10 @@ export default function StudyPath() {
         </div>
 
         {/* Topics List */}
-        {topics.length > 0 && topics[0].id !== 0 && topics[0].title !== "Loading..." ? (
+        {topics && topics.length > 0 ? (
           <div className="space-y-4">
             {topics.map((topic, index) => {
+              if (!topic || topic.id === 0 || topic.title === "Loading..." || topic.title === "No Topics Found") return null;
               const completedSubtopic = topic.subtopics.filter(
                 (st) => st.completed
               ).length;
@@ -294,12 +304,9 @@ export default function StudyPath() {
                 totalSubtopic > 0
                   ? Math.round((completedSubtopic / totalSubtopic) * 100)
                   : 0;
-              
-              // ------------------------------------
-              // 🚀 FIX: Unrestricted Activation Logic
-              // Set isTopicActive to TRUE so all topics can be interacted with immediately.
-              // ------------------------------------
-              const isTopicActive = true; 
+
+              // Check if the topic is currently active (in-progress or completed)
+              const isTopicActive = topic.status !== 'pending';
 
               return (
                 <div
@@ -309,6 +316,8 @@ export default function StudyPath() {
                   <button
                     onClick={() => toggleTopic(topic.id)}
                     className="w-full p-6 text-left focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl"
+                    // 🛑 FIX: REMOVED THE disabled PROP TO ALLOW EXPANSION 🛑
+                    // disabled={topic.status === 'pending' && index !== 0} 
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-4 flex-1">
@@ -368,11 +377,7 @@ export default function StudyPath() {
                         {topic.subtopics.map((subtopic) => (
                           <label
                             key={subtopic.id}
-                            // Opacity styling is now based on whether the topic is 'pending' 
-                            // as a visual cue, but the functionality remains enabled.
-                            className={`flex items-center space-x-3 p-3 rounded-lg cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50 ${
-                                topic.status === 'pending' ? "opacity-90" : ""
-                            }`}
+                            className="flex items-center space-x-3 p-3 rounded-lg cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50"
                           >
                             <input
                               type="checkbox"
@@ -380,7 +385,6 @@ export default function StudyPath() {
                               onChange={() =>
                                 toggleSubtopic(topic.id, subtopic.id)
                               }
-                              // DISABLED PROP IS REMOVED ENTIRELY 
                               className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
                             />
                             <span
@@ -392,7 +396,7 @@ export default function StudyPath() {
                             >
                               {subtopic.title}
                             </span>
-                            {(!subtopic.completed) && (
+                            {!subtopic.completed && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -415,10 +419,10 @@ export default function StudyPath() {
         ) : (
           <div className="text-center p-12 bg-white dark:bg-gray-800 rounded-xl shadow-lg">
              <p className="text-xl font-semibold text-gray-700 dark:text-gray-300">
-                {topics[0].title === "Loading..." ? "Loading Study Path..." : "No Study Path Available."}
+                {topics && topics[0] && topics[0].title === "Loading..." ? "Loading Study Path..." : "No Study Path Available."}
             </p>
             <p className="text-gray-500 dark:text-gray-400 mt-2">
-                {topics[0].description}
+                {topics && topics[0] && topics[0].description ? topics[0].description : "Please upload study materials to get started."}
             </p>
           </div>
         )}

@@ -1,6 +1,8 @@
 import type { Route } from "./+types/chat";
 import { Layout } from "../components/Layout";
 import { useState, useRef, useEffect } from "react";
+import { flushSync } from "react-dom";
+import { streamChatMessage, type ChatMessage as APIChatMessage } from "../utils/api";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -17,6 +19,9 @@ interface Message {
   text: string;
   sender: "user" | "ai";
   timestamp: Date;
+  usedWebSearch?: boolean;
+  contextUsed?: boolean;
+  sources?: string[];
 }
 
 // Mock data for quick topic selection
@@ -26,6 +31,29 @@ const quickTopics = [
   "Help me understand neural networks",
   "What's the difference between classification and regression?",
 ];
+
+// Helper function to parse text and make URLs clickable
+function linkifyText(text: string): React.ReactNode {
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const parts = text.split(urlRegex);
+
+  return parts.map((part, index) => {
+    if (part.match(urlRegex)) {
+      return (
+        <a
+          key={index}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-400 hover:text-blue-300 underline break-all"
+        >
+          {part}
+        </a>
+      );
+    }
+    return part;
+  });
+}
 
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([
@@ -38,8 +66,64 @@ export default function Chat() {
   ]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [fileId, setFileId] = useState<string | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load file_id, messages, and input value from sessionStorage after hydration (client-side only)
+  useEffect(() => {
+    setIsHydrated(true);
+    if (typeof sessionStorage !== "undefined") {
+      const storedFileId = sessionStorage.getItem("current_file_id");
+      if (storedFileId) {
+        setFileId(storedFileId);
+        console.log(`[Chat] Loaded file_id from sessionStorage: ${storedFileId}`);
+      }
+
+      // Restore messages from sessionStorage
+      const storedMessages = sessionStorage.getItem("chat_messages");
+      if (storedMessages) {
+        try {
+          const parsedMessages = JSON.parse(storedMessages);
+          // Convert timestamp strings back to Date objects
+          const messagesWithDates = parsedMessages.map((msg: any) => ({
+            ...msg,
+            timestamp: new Date(msg.timestamp),
+          }));
+          setMessages(messagesWithDates);
+          console.log(`[Chat] Restored ${messagesWithDates.length} messages from sessionStorage`);
+        } catch (error) {
+          console.error("[Chat] Failed to parse stored messages:", error);
+        }
+      }
+
+      // Restore input value from sessionStorage
+      const storedInput = sessionStorage.getItem("chat_input");
+      if (storedInput) {
+        setInputValue(storedInput);
+        console.log(`[Chat] Restored input value from sessionStorage`);
+      }
+    }
+  }, []);
+
+  // Save messages to sessionStorage whenever they change
+  useEffect(() => {
+    if (isHydrated && typeof sessionStorage !== "undefined") {
+      sessionStorage.setItem("chat_messages", JSON.stringify(messages));
+    }
+  }, [messages, isHydrated]);
+
+  // Save input value to sessionStorage whenever it changes
+  useEffect(() => {
+    if (isHydrated && typeof sessionStorage !== "undefined") {
+      if (inputValue.trim()) {
+        sessionStorage.setItem("chat_input", inputValue);
+      } else {
+        sessionStorage.removeItem("chat_input");
+      }
+    }
+  }, [inputValue, isHydrated]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -61,19 +145,115 @@ export default function Chat() {
 
     setMessages((prev) => [...prev, userMessage]);
     setInputValue("");
+    // Clear stored input from sessionStorage
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.removeItem("chat_input");
+    }
     setIsLoading(true);
 
-    // Simulate AI response (replace with actual API call later)
-    setTimeout(() => {
-      const aiMessage: Message = {
-        id: messages.length + 2,
-        text: `I understand you're asking about "${text}". In a real implementation, this would be an AI-generated response based on your study materials. The response would be contextual, detailed, and tailored to your understanding level.`,
+    const aiMessageId = messages.length + 2;
+    let fullText = "";
+    let usedWebSearch = false;
+    let contextUsed = false;
+
+    try {
+      // Build conversation history for context (convert to API format)
+      const conversationHistory: APIChatMessage[] = messages
+        .filter((msg) => msg.id !== 1) // Skip the initial greeting
+        .map((msg) => ({
+          role: msg.sender === "user" ? "user" : "assistant",
+          content: msg.text,
+        }));
+
+      // Add placeholder message for streaming
+      setMessages((prev) => [...prev, {
+        id: aiMessageId,
+        text: "",
         sender: "ai",
         timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, aiMessage]);
+        usedWebSearch: false,
+        contextUsed: false,
+      }]);
+
+      // Stream the response with forced synchronous updates
+      const stream = streamChatMessage(text.trim(), conversationHistory, fileId || undefined);
+      let buffer = "";
+      let updateCount = 0;
+
+      for await (const chunk of stream) {
+        if (chunk.metadata) {
+          // Capture metadata
+          console.log("[STREAM] Metadata:", chunk.metadata);
+          if (chunk.metadata.web_search_used) {
+            usedWebSearch = true;
+          }
+          if (chunk.metadata.context_used) {
+            contextUsed = true;
+          }
+        } else if (chunk.text) {
+          fullText += chunk.text;
+          buffer += chunk.text;
+
+          // Update UI more frequently - every 3 characters OR on newline OR every 5 chunks
+          updateCount++;
+          if (buffer.length > 3 || chunk.text.includes("\n") || updateCount % 5 === 0) {
+            // Use flushSync to force immediate DOM update (no React batching)
+            flushSync(() => {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === aiMessageId
+                    ? { ...msg, text: fullText, usedWebSearch, contextUsed }
+                    : msg
+                )
+              );
+            });
+            // Scroll to latest message immediately
+            scrollToBottom();
+            buffer = "";
+          }
+        } else if (chunk.done) {
+          // Stream completed - final update
+          console.log("[STREAM] Complete");
+          flushSync(() => {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === aiMessageId
+                  ? { ...msg, text: fullText, usedWebSearch, contextUsed }
+                  : msg
+              )
+            );
+          });
+          scrollToBottom();
+          break;
+        } else if (chunk.error) {
+          console.error("[STREAM] Error:", chunk.error);
+          throw new Error(chunk.error);
+        }
+      }
+
+      // Ensure message is updated one final time
+      if (fullText) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === aiMessageId
+              ? { ...msg, text: fullText, usedWebSearch, contextUsed }
+              : msg
+          )
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to send message. Please try again.";
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === aiMessageId
+            ? { ...msg, text: `Sorry, I encountered an error: ${errorMessage}` }
+            : msg
+        )
+      );
+      console.error("Chat error:", error);
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -161,8 +341,49 @@ export default function Chat() {
                       </div>
                     )}
                     <div className="flex-1">
+                      {/* Show badges for AI messages - removed amber warning badge */}
+                      {message.sender === "ai" && (
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {message.usedWebSearch && (
+                            <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-md text-xs font-medium">
+                              <svg
+                                className="w-3 h-3"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                                />
+                              </svg>
+                              Web search used
+                            </div>
+                          )}
+                          {message.contextUsed && (
+                            <div className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-md text-xs font-medium">
+                              <svg
+                                className="w-3 h-3"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                />
+                              </svg>
+                              Using study materials
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <p className="text-sm whitespace-pre-wrap break-words">
-                        {message.text}
+                        {linkifyText(message.text)}
                       </p>
                       <p
                         className={`text-xs mt-1 ${

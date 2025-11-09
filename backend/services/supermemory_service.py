@@ -5,14 +5,22 @@ import os
 import httpx
 import re
 import time
+import asyncio
 from pathlib import Path
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
-# Load .env from root directory (parent of backend/)
-# __file__ is in backend/services/, so go up 2 levels to reach root
-env_path = Path(__file__).parent.parent.parent / ".env"
-load_dotenv(dotenv_path=env_path)
+# Load .env from backend directory first, then fall back to root directory
+# __file__ is in backend/services/, so go up 1 level to reach backend/
+backend_env_path = Path(__file__).parent.parent / ".env"
+root_env_path = Path(__file__).parent.parent.parent / ".env"
+
+if backend_env_path.exists():
+    load_dotenv(dotenv_path=backend_env_path)
+elif root_env_path.exists():
+    load_dotenv(dotenv_path=root_env_path)
+else:
+    load_dotenv()
 
 SUPERMEMORY_API_KEY = os.getenv("SUPERMEMORY_API_KEY")
 SUPERMEMORY_API_URL = os.getenv("SUPERMEMORY_API_URL", "https://api.supermemory.ai")
@@ -147,56 +155,113 @@ class SupermemoryService:
         query: str,
         container_tag: str = "uploaded-documents",
         limit: int = 5,
-        top_k: Optional[int] = None  # Backward compatibility
+        top_k: Optional[int] = None,  # Backward compatibility
+        retry_count: int = 3,
+        retry_delay: float = 1.0
     ) -> Dict[str, Any]:
         """
-        Query Supermemory RAG for relevant context
+        Query Supermemory RAG for relevant context with retry logic.
+
+        Documents must be fully processed (status != "queued") before they can be searched.
+        This method implements exponential backoff retry if search fails initially,
+        as documents may still be processing.
+
+        Args:
+            query: The search query
+            container_tag: The container to search in
+            limit: Number of results to return
+            top_k: Alias for limit (backward compatibility)
+            retry_count: Number of times to retry if search fails (default 3)
+            retry_delay: Initial delay between retries in seconds (exponential backoff)
+
+        Returns:
+            Relevant context from Supermemory
         """
         if top_k is not None:
             limit = top_k
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                search_url = f"{self.base_url}/v3/search"
-                
-                payload = {
-                    "q": query,
-                    "limit": limit
-                }
-                
-                if container_tag:
-                    payload["containerTag"] = container_tag
-                
-                print(f"[DEBUG] Supermemory search URL: {search_url}")
-                print(f"[DEBUG] Supermemory search payload: {payload}")
-                
-                response = await client.post(
-                    search_url, 
-                    headers=self.headers,
-                    json=payload,
-                    timeout=30.0
-                )
-                
-                print(f"[DEBUG] Supermemory search response status: {response.status_code}")
-                
-                response.raise_for_status()
-                return response.json()
-        
-        except httpx.HTTPStatusError as e:
-            error_detail = f"HTTP {e.response.status_code}"
+
+        last_error = None
+
+        for attempt in range(retry_count):
             try:
-                error_body = e.response.json()
-                error_detail += f": {error_body}"
-            except:
-                error_detail += f": {e.response.text[:500]}"
-            print(f"[ERROR] Supermemory search HTTP error: {error_detail}")
-            # Raising the specific error detail to the FastAPI layer
-            raise Exception(f"Supermemory search HTTP error: HTTP {e.response.status_code}: {e.response.reason_phrase}")
-        except httpx.HTTPError as e:
-            error_msg = f"Supermemory search network error: {str(e)}"
-            print(f"[ERROR] {error_msg}")
-            raise Exception(error_msg)
-        except Exception as e:
-            error_msg = f"Error querying Supermemory: {str(e)}"
-            print(f"[ERROR] {error_msg}")
-            raise Exception(error_msg)
+                async with httpx.AsyncClient() as client:
+                    payload = {
+                        "q": query,
+                        "limit": limit
+                    }
+
+                    if container_tag:
+                        payload["containerTag"] = container_tag
+
+                    print(f"[DEBUG] Supermemory search attempt {attempt + 1}/{retry_count}")
+                    print(f"[DEBUG] Supermemory search URL: {self.base_url}/v3/search")
+                    print(f"[DEBUG] Supermemory search payload: {payload}")
+
+                    response = await client.post(
+                        f"{self.base_url}/v3/search",
+                        headers=self.headers,
+                        json=payload,
+                        timeout=30.0
+                    )
+
+                    print(f"[DEBUG] Supermemory search response status: {response.status_code}")
+
+                    # Handle 404 - document may still be processing
+                    if response.status_code == 404:
+                        if attempt < retry_count - 1:
+                            wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                            print(f"[WARN] Supermemory search returned 404 (attempt {attempt + 1})")
+                            print(f"[INFO] Retrying in {wait_time}s... (documents may still be processing)")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            print(f"[WARN] Supermemory search returned 404 after {retry_count} attempts")
+                            return {"results": [], "message": "Documents still being processed"}
+
+                    response.raise_for_status()
+                    result = response.json()
+                    result_count = len(result.get('results', []))
+                    print(f"[DEBUG] Supermemory search returned {result_count} results")
+                    return result
+
+            except httpx.HTTPStatusError as e:
+                last_error = f"HTTP {e.response.status_code}"
+                try:
+                    error_body = e.response.json()
+                    last_error += f": {error_body}"
+                except:
+                    last_error += f": {e.response.text[:500]}"
+
+                if attempt < retry_count - 1:
+                    wait_time = retry_delay * (2 ** attempt)
+                    print(f"[WARN] Supermemory search error: {last_error} (attempt {attempt + 1})")
+                    print(f"[INFO] Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    print(f"[ERROR] Supermemory search HTTP error after {retry_count} attempts: {last_error}")
+                    raise Exception(f"Supermemory search HTTP error: {last_error}")
+
+            except httpx.HTTPError as e:
+                error_msg = f"Supermemory search network error: {str(e)}"
+                print(f"[ERROR] {error_msg}")
+                if attempt == retry_count - 1:
+                    raise Exception(error_msg)
+                else:
+                    wait_time = retry_delay * (2 ** attempt)
+                    print(f"[INFO] Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+
+            except Exception as e:
+                error_msg = f"Error querying Supermemory: {str(e)}"
+                print(f"[ERROR] {error_msg}")
+                if attempt == retry_count - 1:
+                    raise Exception(error_msg)
+                else:
+                    wait_time = retry_delay * (2 ** attempt)
+                    print(f"[INFO] Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+
+        # If we've exhausted all retries without returning, raise the last error
+        if last_error:
+            raise Exception(f"Supermemory search failed after {retry_count} attempts: {last_error}")
+        raise Exception("Supermemory search failed: Unknown error")

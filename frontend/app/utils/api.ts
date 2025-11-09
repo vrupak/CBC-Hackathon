@@ -76,6 +76,202 @@ export async function uploadMaterial(file: File): Promise<UploadResponse> {
   return response.data;
 }
 
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatRequest {
+  message: string;
+  conversation_history?: ChatMessage[];
+  file_id?: string; // ID of uploaded material for context
+}
+
+export interface ChatResponse {
+  success: boolean;
+  response: string;
+  message?: string;
+}
+
+export interface Topic {
+  id: number;
+  title: string;
+  description: string;
+  status: 'completed' | 'in-progress' | 'pending';
+  subtopics: Array<{
+    id: number;
+    title: string;
+    completed: boolean;
+  }>;
+}
+
+export interface StudyProgressRequest {
+  file_id: string;
+  filename: string;
+  topics: Topic[];
+  overall_progress: number;
+  last_updated: string;
+  title?: string;
+}
+
+/**
+ * Send a chat message to the AI Study Buddy backend
+ * Optionally includes file_id for context-aware responses from uploaded materials
+ */
+export async function sendChatMessage(
+  message: string,
+  conversationHistory?: ChatMessage[],
+  fileId?: string
+): Promise<ChatResponse> {
+  const request: ChatRequest = {
+    message,
+    conversation_history: conversationHistory,
+    file_id: fileId,
+  };
+
+  const response = await apiClient.post<ChatResponse>('/chat', request);
+  return response.data;
+}
+
+/**
+ * Stream a chat message to the AI Study Buddy backend
+ * Returns async generator that yields tokens as they are generated
+ * Each chunk is a JSON object with either:
+ * - {"metadata": {"context_used": bool, "web_search_used": bool}}
+ * - {"text": "token"}
+ * - {"done": true}
+ */
+export async function* streamChatMessage(
+  message: string,
+  conversationHistory?: ChatMessage[],
+  fileId?: string
+): AsyncGenerator<{metadata?: {context_used: boolean, web_search_used: boolean}, text?: string, done?: boolean, error?: string}, void, unknown> {
+  const request: ChatRequest = {
+    message,
+    conversation_history: conversationHistory,
+    file_id: fileId,
+  };
+
+  console.log('[streamChatMessage] Starting stream request');
+  const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  console.log('[streamChatMessage] Response received:', response.status);
+
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+
+  if (!response.body) {
+    throw new Error('Response body is null');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let lineCount = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (value) {
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        const lines = buffer.split('\n');
+        // Keep the last incomplete line in the buffer
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.trim()) {
+            lineCount++;
+            try {
+              const parsed = JSON.parse(line);
+              console.log(`[streamChatMessage] Chunk ${lineCount}:`, parsed);
+              yield parsed;
+            } catch (e) {
+              console.error('Failed to parse JSON chunk:', line, e);
+            }
+          }
+        }
+      }
+
+      if (done) {
+        console.log('[streamChatMessage] Stream done, processing remaining buffer');
+        break;
+      }
+    }
+
+    // Process any remaining buffer
+    if (buffer.trim()) {
+      try {
+        const parsed = JSON.parse(buffer);
+        console.log('[streamChatMessage] Final chunk:', parsed);
+        yield parsed;
+      } catch (e) {
+        console.error('Failed to parse final JSON chunk:', buffer, e);
+      }
+    }
+
+    console.log('[streamChatMessage] Stream complete');
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
+ * Save study progress to Supermemory for persistence across sessions
+ */
+export async function saveStudyProgress(progress: StudyProgressRequest): Promise<{ success: boolean; memory_id?: string; message: string }> {
+  try {
+    const response = await apiClient.post('/study-progress/save', progress);
+    return response.data;
+  } catch (error: any) {
+    console.error('Failed to save study progress:', error);
+    throw error;
+  }
+}
+
+/**
+ * Load study progress from Supermemory for a specific file
+ */
+export async function loadStudyProgress(fileId: string): Promise<{ success: boolean; progress_data: any; message: string }> {
+  try {
+    const response = await apiClient.get(`/study-progress/load/${fileId}`);
+    return response.data;
+  } catch (error: any) {
+    console.error('Failed to load study progress:', error);
+    return {
+      success: false,
+      progress_data: null,
+      message: 'Failed to load study progress'
+    };
+  }
+}
+
+/**
+ * List all previously uploaded materials
+ */
+export async function listUploadedMaterials(): Promise<{ success: boolean; materials: any[]; count: number }> {
+  try {
+    const response = await apiClient.get('/materials/list');
+    return response.data;
+  } catch (error: any) {
+    console.error('Failed to list materials:', error);
+    return {
+      success: false,
+      materials: [],
+      count: 0
+    };
+  }
+}
+
 export const getLocalCourses = async (): Promise<{ courses: LocalCourse[], status: string }> => {
     // The endpoint is just /courses, not /api/courses if the axios base url is already /api
     const response = await axios.get(`${API_BASE_URL}/courses`);
