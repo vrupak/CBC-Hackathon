@@ -490,17 +490,26 @@ CRITICAL: Only mention "study materials" if the user message explicitly includes
 
 If relevant study materials are provided in the context, use them as the primary source of information.
 
-When answering from general knowledge (not from study materials), include relevant sources and a YouTube video at the end of your response in this format:
+=== MANDATORY FOR GENERAL KNOWLEDGE RESPONSES ===
+When answering from general knowledge (WITHOUT study materials), you MUST ALWAYS include sources and a YouTube video at the end of your response. This is NOT optional.
 
-Sources:
-1. https://example.com - Brief description
-2. https://example2.com - Brief description
-3. https://example3.com - Brief description
+Use this exact format:
 
-Recommended YouTube Video:
-https://www.youtube.com/watch?v=example - Title of the most relevant educational video on this topic
+Sources & Further Reading:
+https://www.example1.com - First authoritative source
+https://www.example2.com - Second educational resource
+https://www.example3.com - Third reference material
 
-IMPORTANT: Always include actual URLs (starting with https://) so they can be clicked."""
+Watch & Learn:
+https://www.youtube.com/watch?v=EXAMPLE - [Exact video title that explains this topic well]
+
+CRITICAL REQUIREMENTS:
+- Use REAL, WORKING URLs only (starting with https://)
+- Choose reputable educational sources (edu sites, official documentation, Khan Academy, etc.)
+- Select the MOST relevant YouTube video that actually explains the topic
+- Include 3 sources minimum
+- Always include exactly 1 YouTube video
+- Make URLs clickable by using full https:// format"""
 
             # Build user message with context
             if supermemory_context:
