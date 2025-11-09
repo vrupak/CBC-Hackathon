@@ -5,9 +5,9 @@ import { useNavigate } from 'react-router-dom';
 // NOTE: These functions need to be implemented in '../utils/api'
 import { getLocalCourses, getAvailableCanvasCourses, addSelectedCanvasCourses } from '../utils/api'; 
 
-// --- Type Definitions ---
+// --- Type Definitions (Added LinkCourse to handle local_course_id from URL) ---
 
-interface LocalCourse {
+export interface LocalCourse { // Exported for use in other components if needed
   courseName: string;
   local_course_id: number;
   canvas_id: string;
@@ -34,12 +34,13 @@ export function CourseCards() {
   const [selectedCanvasIds, setSelectedCanvasIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   
-  // NEW: State for fetching the initial list of available courses
+  // State for fetching the initial list of available courses
   const [isFetchingAvailable, setIsFetchingAvailable] = useState(false);
   
   // Ref for the modal content area
   const modalRef = useRef<HTMLDivElement>(null); 
 
+  // Use useNavigate for navigation
   const navigate = useNavigate();
 
   // 1. Fetch Local Courses
@@ -134,9 +135,11 @@ export function CourseCards() {
 
   // --- Render Functions ---
 
+  // MODIFIED: Added onClick handler to navigate
   const renderCourseCard = (course: LocalCourse) => (
     <div 
       key={course.local_course_id}
+      onClick={() => navigate(`/course/${course.local_course_id}`)} // NEW: Navigate on click
       className="bg-white dark:bg-gray-800 rounded-xl p-6 transition-shadow cursor-pointer 
                  shadow-lg hover:shadow-xl dark:shadow-gray-950/50 
                  border border-gray-100 dark:border-gray-700/50 
