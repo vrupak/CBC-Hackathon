@@ -78,6 +78,7 @@ const ModuleActions: React.FC<{
 
             if (structuredTopics.length === 0) {
                  onError("Topic generation failed or returned no data. Check API keys and backend logs.");
+                 setIsGenerating(false); // <-- Make sure to stop loading on error
                  return;
             }
             
@@ -85,6 +86,7 @@ const ModuleActions: React.FC<{
             if (typeof sessionStorage !== 'undefined') {
                 sessionStorage.setItem('extractedTopicsJson', JSON.stringify(structuredTopics));
                 sessionStorage.setItem('filename', response.filename); // Use filename from backend
+                sessionStorage.setItem('currentModuleId', module.id.toString()); // <-- ADD THIS
             }
 
             // 3. Navigate to the study path route
@@ -92,7 +94,8 @@ const ModuleActions: React.FC<{
                 state: {
                     topics: structuredTopics, 
                     filename: response.filename,
-                    source: response.source || `${courseName} - ${module.name}`
+                    source: response.source || `${courseName} - ${module.name}`,
+                    moduleId: module.id // <-- ADD THIS
                 },
             });
 
@@ -166,7 +169,7 @@ const ModuleActions: React.FC<{
                             : buttonColor
                     }`}
                 >
-                    {isGenerating ? (
+                    {isGenerating || isDownloading || isIngesting ? (
                         <>
                             <svg className="animate-spin h-4 w-4 text-white mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                             {buttonText}

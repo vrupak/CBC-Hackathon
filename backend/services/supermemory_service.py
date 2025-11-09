@@ -185,8 +185,8 @@ class SupermemoryService:
         for attempt in range(retry_count):
             try:
                 async with httpx.AsyncClient() as client:
-                    # Use /v3/documents/search path (fix for Canvas token auth)
-                    search_url = f"{self.base_url}/v3/documents/search"
+                    # Use /v3/search path (updated endpoint)
+                    search_url = f"{self.base_url}/v3/search"
 
                     payload = {
                         "q": query,

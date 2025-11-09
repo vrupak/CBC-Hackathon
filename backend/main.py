@@ -493,7 +493,9 @@ async def generate_module_topics(
 
     try:
         # 2. Generate RAG Query
-        rag_query = f"Extract a comprehensive learning path including topics and subtopics from the document: {module.name} from course: {course.name}"
+        # We query for the module and course name, which are stored in the metadata.
+        # This will retrieve all chunks associated with this specific document.
+        rag_query = f"{module.name} {course.name}"
         
         # 3. Call Claude with RAG context
         logger.info(f"Generating topics for module {local_module_id} using Claude + RAG...")
