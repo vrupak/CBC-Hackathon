@@ -1011,6 +1011,49 @@ async def list_uploaded_materials():
             "materials": []
         }
 
+@app.get("/api/courses/{local_course_id}/modules")
+async def get_course_modules_list(
+    local_course_id: int,
+    db: DBSession
+):
+    db_service = get_db_service()
+    
+    # 1. Fetch the Course record
+    course = db.query(Course).filter_by(id=local_course_id).first()
+    if not course:
+        # Returns a 404 if the course ID doesn't exist locally
+        raise HTTPException(
+            status_code=404,
+            detail=f"Course with local ID {local_course_id} not found."
+        )
+
+    # 2. Fetch all Module records associated with the Course
+    modules = db.query(Module).filter_by(course_id=local_course_id).all()
+
+    # 3. Serialize the data to match the frontend's expected structure
+    response_modules = []
+    for module in modules:
+        response_modules.append({
+            "id": module.id,
+            "course_id": module.course_id,
+            "name": module.name,
+            "completed": module.completed,
+            "canvas_file_id": module.canvas_file_id,
+            "file_url": module.file_url,
+            "is_downloaded": module.is_downloaded,
+            "is_ingested": module.is_ingested,
+        })
+        
+    return JSONResponse(
+        status_code=200,
+        content={
+            "courseName": course.name,
+            "courseId": course.id,
+            "canvasId": course.canvas_id,
+            "modules": response_modules
+        }
+    )
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
