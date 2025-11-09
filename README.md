@@ -146,25 +146,6 @@ pip install -r requirements.txt
 cp .env.example .env  # Or create manually
 ```
 
-**Backend Environment Variables** (`.env`):
-
-```env
-# Claude API
-ANTHROPIC_API_KEY=your_claude_api_key_here
-CLAUDE_MODEL=claude-sonnet-4-5-20250929
-
-# Supermemory RAG
-SUPERMEMORY_API_BASE_URL=https://api.supermemory.ai
-SUPERMEMORY_SPACE_ID=your_space_id
-SUPERMEMORY_API_TOKEN=your_supermemory_token
-
-# Canvas LMS
-CANVAS_API_TOKEN=your_canvas_api_token
-CANVAS_BASE_URL=https://canvas.asu.edu
-
-# Database
-DATABASE_URL=sqlite:///./ai_study_buddy.db
-```
 
 ### 3. Frontend Setup
 
