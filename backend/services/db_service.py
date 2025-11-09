@@ -1,44 +1,60 @@
-from models import SessionLocal, User, Course, Module
+from models import SessionLocal, Course, Module
+import os
+from dotenv import load_dotenv
+
+# Load .env variables (needed here for accessing CANVAS_TOKEN if logic was present, 
+# but mostly retained for context consistency)
+load_dotenv()
+CANVAS_TOKEN = os.getenv("CANVAS_TOKEN")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 class DBService:
     def session(self):
         return SessionLocal()
 
-    # ---- User Helpers ----
-    def ensure_user(self, db, user_id: str, api_key: str):
-        user = db.query(User).filter_by(user_id=user_id).first()
-        if not user:
-            user = User(user_id=user_id, api_key=api_key)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-        return user
+    # ---- User Helpers (All removed) ----
 
     # ---- Course Helpers ----
-    def create_course(self, db, owner_user_pk: int, course_name: str):
-        # NOTE: This should be renamed to get_or_create_course 
-        # based on your requirements to reuse courses.
-        course = db.query(Course).filter_by(name=course_name, user_id=owner_user_pk).first()
+    # User PK parameter removed
+    def create_course(self, db, course_name: str):
+        """Creates a course record (typically for a manual upload)."""
+        # We assume one app instance, so filtering is only by name and canvas_id=None
+        course = db.query(Course).filter_by(name=course_name, canvas_id=None).first()
         if not course:
-            course = Course(name=course_name, user_id=owner_user_pk)
+            course = Course(name=course_name)
             db.add(course)
             db.commit()
             db.refresh(course)
         return course
 
-    # ---- NEW: Get Course List ----
-    def get_all_user_courses(self, db, user_pk: int):
-        return db.query(Course).filter_by(user_id=user_pk).all()
+    # User PK parameter removed
+    def get_or_create_course_from_canvas(self, db, course_name: str, canvas_id: str):
+        """Gets or creates a course record linked to a Canvas ID."""
+        # Now only filters by canvas_id globally
+        course = db.query(Course).filter_by(canvas_id=canvas_id).first()
+        if not course:
+            course = Course(
+                name=course_name, 
+                canvas_id=canvas_id, 
+                progress=0, 
+                total_modules=0
+            )
+            db.add(course)
+            db.commit()
+            db.refresh(course)
+        return course
         
-    # ---- Module Helpers ---- (Modified for topic persistence)
+    # ---- Get Course List ----
+    # Renamed and simplified
+    def get_all_courses(self, db):
+        return db.query(Course).all()
+        
+    # ---- Module Helpers ---- 
     def add_modules_bulk(self, db, course_id: int, topics_data: list[dict]):
-        # This assumes topics_data is the parsed Claude JSON list of TopicData
-        # where each TopicData has subtopics
+        # This function is retained but not currently used with the upload disabled
         module_names = []
         for topic in topics_data:
-            # Main Topic
             module_names.append(topic['title'])
-            # Subtopics (if you want them as individual modules)
             for subtopic in topic.get('subtopics', []):
                  module_names.append(f"{topic['title']}: {subtopic['title']}")
 
