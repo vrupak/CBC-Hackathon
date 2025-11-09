@@ -259,7 +259,15 @@ async def chat_stream(request: ChatRequest):
         print(f"[INFO] Received streaming chat request: {request.message[:100]}...")
 
         # Initialize services
-        claude_client = ClaudeClient()
+        try:
+            claude_client = ClaudeClient()
+        except ValueError as e:
+            print(f"[ERROR] Claude service initialization failed: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="Claude API is not configured. Please set ANTHROPIC_API_KEY in your .env file."
+            )
+
         supermemory_service = get_supermemory_service()
         context = None
         context_used = False
