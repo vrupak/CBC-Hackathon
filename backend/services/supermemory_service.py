@@ -10,10 +10,17 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
-# Load .env from backend directory
+# Load .env from backend directory first, then fall back to root directory
 # __file__ is in backend/services/, so go up 1 level to reach backend/
-env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(dotenv_path=env_path)
+backend_env_path = Path(__file__).parent.parent / ".env"
+root_env_path = Path(__file__).parent.parent.parent / ".env"
+
+if backend_env_path.exists():
+    load_dotenv(dotenv_path=backend_env_path)
+elif root_env_path.exists():
+    load_dotenv(dotenv_path=root_env_path)
+else:
+    load_dotenv()
 
 SUPERMEMORY_API_KEY = os.getenv("SUPERMEMORY_API_KEY")
 SUPERMEMORY_API_URL = os.getenv("SUPERMEMORY_API_URL", "https://api.supermemory.ai")

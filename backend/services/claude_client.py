@@ -10,9 +10,16 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env from backend directory
-env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(dotenv_path=env_path)
+# Load .env from backend directory first, then fall back to root directory
+backend_env_path = Path(__file__).parent.parent / ".env"
+root_env_path = Path(__file__).parent.parent.parent / ".env"
+
+if backend_env_path.exists():
+    load_dotenv(dotenv_path=backend_env_path)
+elif root_env_path.exists():
+    load_dotenv(dotenv_path=root_env_path)
+else:
+    load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
