@@ -127,7 +127,7 @@ export async function sendChatMessage(
     file_id: fileId,
   };
 
-  const response = await apiClient.post<ChatResponse>('/api/chat', request);
+  const response = await apiClient.post<ChatResponse>('/chat', request);
   return response.data;
 }
 
@@ -151,7 +151,7 @@ export async function* streamChatMessage(
   };
 
   console.log('[streamChatMessage] Starting stream request');
-  const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
+  const response = await fetch(`${API_BASE_URL}/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -228,7 +228,7 @@ export async function* streamChatMessage(
  */
 export async function saveStudyProgress(progress: StudyProgressRequest): Promise<{ success: boolean; memory_id?: string; message: string }> {
   try {
-    const response = await apiClient.post('/api/study-progress/save', progress);
+    const response = await apiClient.post('/study-progress/save', progress);
     return response.data;
   } catch (error: any) {
     console.error('Failed to save study progress:', error);
@@ -241,7 +241,7 @@ export async function saveStudyProgress(progress: StudyProgressRequest): Promise
  */
 export async function loadStudyProgress(fileId: string): Promise<{ success: boolean; progress_data: any; message: string }> {
   try {
-    const response = await apiClient.get(`/api/study-progress/load/${fileId}`);
+    const response = await apiClient.get(`/study-progress/load/${fileId}`);
     return response.data;
   } catch (error: any) {
     console.error('Failed to load study progress:', error);
@@ -258,7 +258,7 @@ export async function loadStudyProgress(fileId: string): Promise<{ success: bool
  */
 export async function listUploadedMaterials(): Promise<{ success: boolean; materials: any[]; count: number }> {
   try {
-    const response = await apiClient.get('/api/materials/list');
+    const response = await apiClient.get('/materials/list');
     return response.data;
   } catch (error: any) {
     console.error('Failed to list materials:', error);
