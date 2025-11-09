@@ -1,14 +1,18 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 import os
 from pathlib import Path
 from typing import Optional, Annotated, List
-import httpx 
+import httpx
 from dotenv import load_dotenv
 import logging
 import re
+import json
+import uuid
+import asyncio
+from datetime import datetime
 
 from services.supermemory_service import SupermemoryService 
 from services.claude_service import ClaudeService 
@@ -337,6 +341,252 @@ async def generate_module_topics(
         error_msg = f"An unexpected error occurred during study path generation: {str(e)}"
         logger.error(f"Study path generation failed for module {local_module_id}: {e}")
         raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.put("/api/llm/modules/{local_module_id}/update-study-path")
+async def update_module_study_path(
+    local_module_id: int,
+    request: dict,
+    db: DBSession
+):
+    """
+    Update the study path JSON for a module (e.g., when user marks topics as completed)
+    """
+    db_service = get_db_service()
+
+    # 1. Retrieve the module
+    module = db.query(Module).filter_by(id=local_module_id).first()
+    if not module:
+        raise HTTPException(status_code=404, detail=f"Module with ID {local_module_id} not found.")
+
+    # 2. Get the new topics JSON from request
+    topics_json = request.get("topics_json")
+    if not topics_json:
+        raise HTTPException(status_code=400, detail="topics_json is required")
+
+    try:
+        # 3. Update the study path in the database
+        db_service.update_module_study_path(db, local_module_id, topics_json)
+
+        return JSONResponse(
+            status_code=200,
+            content={"message": "Study path updated successfully"}
+        )
+    except Exception as e:
+        error_msg = f"Error updating study path: {str(e)}"
+        logger.error(f"Study path update failed for module {local_module_id}: {e}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(message: dict):
+    """
+    Chat endpoint with streaming response
+
+    Request format:
+    {
+        "message": "User question",
+        "conversation_history": [...],  # Optional
+        "file_id": "..."  # Optional
+    }
+
+    Response: Server-Sent Events (SSE) stream with JSON chunks
+    """
+    user_message = message.get("message", "").strip()
+    if not user_message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    conversation_id = message.get("conversation_id", str(uuid.uuid4()))
+
+    def generate():
+        try:
+            # Get services
+            supermemory_service = get_supermemory_service()
+            claude_service = get_claude_service()
+
+            if not claude_service:
+                yield f"data: {json.dumps({'error': 'Claude service not configured'})}\n\n"
+                return
+
+            print(f"[INFO] Chat request: {user_message}")
+            print(f"[INFO] Conversation ID: {conversation_id}")
+
+            # Step 1: Search Supermemory for relevant context
+            supermemory_context = ""
+            if supermemory_service:
+                try:
+                    print(f"[INFO] Searching Supermemory for context...")
+                    search_results = asyncio.run(supermemory_service.query(
+                        query=user_message,
+                        container_tag="uploaded-documents",
+                        limit=5
+                    ))
+
+                    # Extract context from search results with corrected logic
+                    if isinstance(search_results, dict):
+                        if "results" in search_results:
+                            # Each result has a 'chunks' array with content
+                            for result in search_results["results"]:
+                                if "chunks" in result and isinstance(result["chunks"], list):
+                                    for chunk in result["chunks"]:
+                                        if "content" in chunk:
+                                            supermemory_context += str(chunk["content"]) + "\n\n"
+                                # Fallback: try to get content directly from result
+                                elif "content" in result:
+                                    supermemory_context += str(result["content"]) + "\n\n"
+                                elif "text" in result:
+                                    supermemory_context += str(result["text"]) + "\n\n"
+                        elif "data" in search_results and isinstance(search_results["data"], list):
+                            supermemory_context = "\n\n".join([
+                                str(item.get("content", item.get("text", "")))
+                                for item in search_results["data"]
+                            ])
+
+                    # Only consider context "found" if it's substantial (>= 500 chars)
+                    # This prevents showing "Using study materials" for brief/irrelevant matches
+                    # from tangentially related documents or stored conversations
+                    MIN_CONTEXT_LENGTH = 500
+
+                    if supermemory_context and len(supermemory_context.strip()) >= MIN_CONTEXT_LENGTH:
+                        print(f"[INFO] Found Supermemory context: {len(supermemory_context)} characters")
+                        # Yield metadata about context
+                        yield json.dumps({"metadata": {"context_used": True, "web_search_used": False}}) + "\n"
+                    else:
+                        if supermemory_context:
+                            print(f"[INFO] Found minimal context ({len(supermemory_context)} chars), treating as no context")
+                        else:
+                            print("[INFO] No Supermemory context found, will use general knowledge")
+                        yield json.dumps({"metadata": {"context_used": False, "web_search_used": False}}) + "\n"
+                        # Clear context so Claude doesn't use irrelevant snippets
+                        supermemory_context = ""
+
+                except Exception as e:
+                    print(f"[WARN] Supermemory search failed: {e}")
+                    yield json.dumps({"metadata": {"context_used": False, "web_search_used": False, "error": str(e)}}) + "\n"
+
+            # Step 2: Build system prompt
+            system_prompt = """You are an expert AI Study Buddy helping students learn.
+Your role is to:
+1. Answer questions clearly and concisely
+2. Provide examples when helpful
+3. Adapt explanations to the student's level
+4. Encourage deeper understanding
+5. Be encouraging and supportive
+
+IMPORTANT: Do NOT use markdown formatting. Respond in plain text format only:
+- Do NOT use # for headings
+- Do NOT use ** for bold
+- Do NOT use - for bullet points
+- Do NOT use ``` for code blocks
+- Do NOT use any other markdown syntax
+
+Instead, use:
+- Line breaks and natural text organization
+- Numbers (1. 2. 3.) for lists if needed
+- Plain text emphasis using CAPS if needed
+- Clear spacing between sections
+
+If relevant study materials are provided, use them as the primary source of information.
+
+IMPORTANT: When answering questions based on general knowledge (not from study materials), include relevant sources and a YouTube video at the end of your response in this format:
+
+Sources:
+1. https://example.com - Brief description
+2. https://example2.com - Brief description
+3. https://example3.com - Brief description
+
+Recommended YouTube Video:
+https://www.youtube.com/watch?v=example - Title of the most relevant educational video on this topic
+
+IMPORTANT: Always include actual URLs (starting with https://) so they can be clicked."""
+
+            # Build user message with context
+            if supermemory_context:
+                full_message = f"""Based on the student's study materials:
+
+{supermemory_context}
+
+---
+
+Student question: {user_message}"""
+            else:
+                full_message = user_message
+
+            # Step 3: Stream response from Claude
+            print(f"[INFO] Streaming response from Claude...")
+
+            with claude_service.client.messages.stream(
+                model=claude_service.model,
+                max_tokens=2000,
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": full_message}
+                ]
+            ) as stream:
+                # If no context found, add acknowledgment at the beginning
+                if not supermemory_context:
+                    acknowledgment = "Note: I didn't find this information in your uploaded study materials, so I'm providing an answer based on general knowledge.\n\n"
+                    for char in acknowledgment:
+                        yield json.dumps({"text": char}) + "\n"
+
+                # Stream each text chunk as it arrives
+                for text in stream.text_stream:
+                    yield json.dumps({"text": text}) + "\n"
+
+                # Get the final message for storage
+                final_message = stream.get_final_message()
+
+            # Step 4: Store conversation in Supermemory
+            if supermemory_service:
+                try:
+                    print(f"[INFO] Storing conversation in Supermemory...")
+
+                    # Get the full response text
+                    response_text = final_message.content[0].text if final_message.content else ""
+
+                    # Store the user message
+                    asyncio.run(supermemory_service.ingest_document(
+                        content=f"User Question: {user_message}",
+                        filename=f"conversation-user-{conversation_id[:8]}",
+                        metadata={
+                            "type": "conversation",
+                            "role": "user",
+                            "conversation_id": conversation_id,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                    ))
+
+                    # Store the AI response
+                    asyncio.run(supermemory_service.ingest_document(
+                        content=f"AI Response: {response_text}",
+                        filename=f"conversation-ai-{conversation_id[:8]}",
+                        metadata={
+                            "type": "conversation",
+                            "role": "assistant",
+                            "conversation_id": conversation_id,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                    ))
+
+                    print(f"[INFO] Conversation stored in Supermemory")
+                except Exception as e:
+                    print(f"[WARN] Failed to store conversation in Supermemory: {e}")
+
+            # Yield done signal
+            yield json.dumps({"done": True}) + "\n"
+
+        except Exception as e:
+            print(f"[ERROR] Streaming error: {e}")
+            yield json.dumps({"error": str(e)}) + "\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 # --- Existing Canvas Sync Routes (Kept for completeness) ---
