@@ -344,7 +344,16 @@ IMPORTANT INSTRUCTIONS:
 2. If YES: Prioritize using the study material to answer the question. You may supplement with additional knowledge if needed.
 3. If NO: Acknowledge that the material doesn't cover this topic, then provide information from your general knowledge.
 4. Always be clear about whether you're using the uploaded material or general knowledge.
-5. Be concise, educational, and adapt explanations to the user's understanding level."""
+5. Be concise, educational, and adapt explanations to the user's understanding level.
+6. CRITICAL: Return your response in PLAIN TEXT format only. DO NOT use markdown formatting. DO NOT use asterisks, hashtags, backticks, or any other markdown syntax. Use simple line breaks for paragraphs.
+7. IMPORTANT: After your explanation, include a "Sources & Resources:" section with:
+   - Any relevant URLs (as plain URLs on their own lines so they become clickable)
+   - At least one relevant YouTube video link that would help the user learn more about this topic
+   Format this section at the end like:
+
+   Sources & Resources:
+   https://example.com/relevant-article
+   https://youtube.com/watch?v=relevant-video"""
         elif web_search_used:
             system_prompt = f"""You are an intelligent study assistant.
 The user asked about a topic NOT covered in their uploaded study materials.
@@ -360,12 +369,30 @@ Web search results:
 {final_context}
 </web_results>
 
-Provide a clear, educational response that acknowledges the material gap."""
+Provide a clear, educational response that acknowledges the material gap.
+CRITICAL: Return your response in PLAIN TEXT format only. DO NOT use markdown formatting. DO NOT use asterisks, hashtags, backticks, or any other markdown syntax. Use simple line breaks for paragraphs.
+IMPORTANT: After your explanation, include a "Sources & Resources:" section with:
+- The web sources you used (as plain URLs on their own lines so they become clickable)
+- At least one relevant YouTube video link that would help the user learn more about this topic
+Format this section at the end like:
+
+Sources & Resources:
+https://example.com/relevant-article
+https://youtube.com/watch?v=relevant-video"""
         else:
             system_prompt = """You are an AI Study Buddy, a helpful educational assistant.
 You help students understand concepts, answer questions about their study materials, and provide explanations in a clear and engaging way.
 Be supportive, patient, and adapt your explanations to the user's understanding level.
-When answering, provide accurate, concise, and educational responses."""
+When answering, provide accurate, concise, and educational responses.
+CRITICAL: Return your response in PLAIN TEXT format only. DO NOT use markdown formatting. DO NOT use asterisks, hashtags, backticks, or any other markdown syntax. Use simple line breaks for paragraphs.
+IMPORTANT: After your explanation, include a "Sources & Resources:" section with:
+- Relevant educational URLs (as plain URLs on their own lines so they become clickable)
+- At least one relevant YouTube video link that would help the user learn more about this topic
+Format this section at the end like:
+
+Sources & Resources:
+https://example.com/relevant-article
+https://youtube.com/watch?v=relevant-video"""
 
         # Build messages
         messages = []

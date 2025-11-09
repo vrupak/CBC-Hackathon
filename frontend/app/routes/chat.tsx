@@ -19,6 +19,8 @@ interface Message {
   text: string;
   sender: "user" | "ai";
   timestamp: Date;
+  usedWebSearch?: boolean;
+  sources?: string[];
 }
 
 // Mock data for quick topic selection
@@ -28,6 +30,29 @@ const quickTopics = [
   "Help me understand neural networks",
   "What's the difference between classification and regression?",
 ];
+
+// Helper function to parse text and make URLs clickable
+function linkifyText(text: string): React.ReactNode {
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const parts = text.split(urlRegex);
+
+  return parts.map((part, index) => {
+    if (part.match(urlRegex)) {
+      return (
+        <a
+          key={index}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-400 hover:text-blue-300 underline break-all"
+        >
+          {part}
+        </a>
+      );
+    }
+    return part;
+  });
+}
 
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([
@@ -45,7 +70,7 @@ export default function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load file_id from sessionStorage after hydration (client-side only)
+  // Load file_id and messages from sessionStorage after hydration (client-side only)
   useEffect(() => {
     setIsHydrated(true);
     if (typeof sessionStorage !== "undefined") {
@@ -54,8 +79,32 @@ export default function Chat() {
         setFileId(storedFileId);
         console.log(`[Chat] Loaded file_id from sessionStorage: ${storedFileId}`);
       }
+
+      // Restore messages from sessionStorage
+      const storedMessages = sessionStorage.getItem("chat_messages");
+      if (storedMessages) {
+        try {
+          const parsedMessages = JSON.parse(storedMessages);
+          // Convert timestamp strings back to Date objects
+          const messagesWithDates = parsedMessages.map((msg: any) => ({
+            ...msg,
+            timestamp: new Date(msg.timestamp),
+          }));
+          setMessages(messagesWithDates);
+          console.log(`[Chat] Restored ${messagesWithDates.length} messages from sessionStorage`);
+        } catch (error) {
+          console.error("[Chat] Failed to parse stored messages:", error);
+        }
+      }
     }
   }, []);
+
+  // Save messages to sessionStorage whenever they change
+  useEffect(() => {
+    if (isHydrated && typeof sessionStorage !== "undefined") {
+      sessionStorage.setItem("chat_messages", JSON.stringify(messages));
+    }
+  }, [messages, isHydrated]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -81,6 +130,7 @@ export default function Chat() {
 
     const aiMessageId = messages.length + 2;
     let fullText = "";
+    let usedWebSearch = false;
 
     try {
       // Build conversation history for context (convert to API format)
@@ -97,6 +147,7 @@ export default function Chat() {
         text: "",
         sender: "ai",
         timestamp: new Date(),
+        usedWebSearch: false,
       }]);
 
       // Stream the response with forced synchronous updates
@@ -106,8 +157,11 @@ export default function Chat() {
 
       for await (const chunk of stream) {
         if (chunk.metadata) {
-          // Log metadata but don't display it
+          // Capture web search metadata
           console.log("[STREAM] Metadata:", chunk.metadata);
+          if (chunk.metadata.web_search_used) {
+            usedWebSearch = true;
+          }
         } else if (chunk.text) {
           fullText += chunk.text;
           buffer += chunk.text;
@@ -120,7 +174,7 @@ export default function Chat() {
               setMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === aiMessageId
-                    ? { ...msg, text: fullText }
+                    ? { ...msg, text: fullText, usedWebSearch }
                     : msg
                 )
               );
@@ -136,7 +190,7 @@ export default function Chat() {
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === aiMessageId
-                  ? { ...msg, text: fullText }
+                  ? { ...msg, text: fullText, usedWebSearch }
                   : msg
               )
             );
@@ -154,7 +208,7 @@ export default function Chat() {
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === aiMessageId
-              ? { ...msg, text: fullText }
+              ? { ...msg, text: fullText, usedWebSearch }
               : msg
           )
         );
@@ -259,8 +313,26 @@ export default function Chat() {
                       </div>
                     )}
                     <div className="flex-1">
+                      {message.usedWebSearch && message.sender === "ai" && (
+                        <div className="inline-flex items-center gap-1 mb-2 px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-md text-xs font-medium">
+                          <svg
+                            className="w-3 h-3"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                            />
+                          </svg>
+                          Web search used
+                        </div>
+                      )}
                       <p className="text-sm whitespace-pre-wrap break-words">
-                        {message.text}
+                        {linkifyText(message.text)}
                       </p>
                       <p
                         className={`text-xs mt-1 ${

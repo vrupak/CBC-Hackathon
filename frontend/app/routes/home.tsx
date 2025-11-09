@@ -1,6 +1,7 @@
 import type { Route } from "./+types/home";
 import { Layout } from "../components/Layout";
 import { useState, useEffect } from "react";
+import { flushSync } from "react-dom";
 import { useNavigate } from "react-router";
 import { uploadMaterial } from "../utils/api";
 
@@ -64,44 +65,55 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export default function Home() {
-  // Load initial state from sessionStorage
-  const loadInitialState = () => {
+  const [isDragging, setIsDragging] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const navigate = useNavigate();
+
+  // Load and validate upload state from sessionStorage on mount
+  useEffect(() => {
     if (typeof sessionStorage !== 'undefined') {
-      const savedState = sessionStorage.getItem('homeUploadState');
-      if (savedState) {
+      const uploadStateStr = sessionStorage.getItem('uploadState');
+      if (uploadStateStr) {
         try {
-          return JSON.parse(savedState);
+          const uploadState = JSON.parse(uploadStateStr);
+          const now = Date.now();
+          // Clear state if it's older than 5 minutes (stuck state)
+          if (uploadState.timestamp && (now - uploadState.timestamp) > 5 * 60 * 1000) {
+            console.log('[Upload] Clearing stuck upload state');
+            sessionStorage.removeItem('uploadState');
+          } else if (uploadState.isUploading) {
+            // Restore uploading state
+            console.log('[Upload] Restoring upload state from sessionStorage');
+            setIsUploading(true);
+          }
         } catch (e) {
-          console.error("Failed to load saved state:", e);
+          console.error('[Upload] Failed to parse upload state:', e);
+          sessionStorage.removeItem('uploadState');
         }
       }
     }
-    return {
-      isUploading: false,
-      uploadError: null,
-      uploadSuccess: false,
-    };
-  };
+  }, []);
 
-  const initialState = loadInitialState();
-
-  const [isDragging, setIsDragging] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(initialState.isUploading);
-  const [uploadError, setUploadError] = useState<string | null>(initialState.uploadError);
-  const [uploadSuccess, setUploadSuccess] = useState(initialState.uploadSuccess);
-  const navigate = useNavigate();
-
-  // Save state to sessionStorage whenever it changes
+  // Persist upload state to sessionStorage so it survives tab switches
   useEffect(() => {
     if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.setItem('homeUploadState', JSON.stringify({
-        isUploading,
-        uploadError,
-        uploadSuccess,
-      }));
+      if (isUploading) {
+        const uploadState = {
+          isUploading: true,
+          timestamp: Date.now(),
+        };
+        sessionStorage.setItem('uploadState', JSON.stringify(uploadState));
+        console.log('[Upload] Saved uploading state to sessionStorage');
+      } else {
+        // Clear state when not uploading
+        sessionStorage.removeItem('uploadState');
+        console.log('[Upload] Cleared upload state from sessionStorage');
+      }
     }
-  }, [isUploading, uploadError, uploadSuccess]);
+  }, [isUploading]);
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -155,9 +167,14 @@ export default function Home() {
       return;
     }
 
-    setIsUploading(true);
-    setUploadError(null);
-    setUploadSuccess(false);
+    // Use flushSync to immediately update the UI before starting the async operation
+    flushSync(() => {
+      setIsUploading(true);
+      setUploadError(null);
+      setUploadSuccess(false);
+    });
+
+    console.log("[Upload] Starting upload for:", selectedFile.name);
 
     try {
       const response = await uploadMaterial(selectedFile);
@@ -197,8 +214,17 @@ export default function Home() {
         console.warn("Topics extraction warning:", response.topics_error);
       }
 
-      setUploadSuccess(true);
-      setIsUploading(false);
+      console.log("[Upload] Upload successful, navigating to study path");
+
+      flushSync(() => {
+        setUploadSuccess(true);
+        setIsUploading(false);
+      });
+
+      // Clear upload state from sessionStorage immediately
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem('uploadState');
+      }
 
       // Navigate to study path after a brief delay to show success message
       setTimeout(() => {
@@ -212,11 +238,19 @@ export default function Home() {
         });
       }, 1500);
     } catch (error: any) {
-      console.error("Upload error:", error);
-      console.error("Error response:", error.response?.data);
+      console.error("[Upload] Upload error:", error);
+      console.error("[Upload] Error response:", error.response?.data);
       const errorMessage = error.response?.data?.detail || error.message || "Failed to upload file. Please try again.";
-      setUploadError(errorMessage);
-      setIsUploading(false);
+
+      flushSync(() => {
+        setUploadError(errorMessage);
+        setIsUploading(false);
+      });
+
+      // Clear upload state from sessionStorage on error
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem('uploadState');
+      }
     }
   };
 
@@ -225,11 +259,6 @@ export default function Home() {
     setUploadError(null);
     setUploadSuccess(false);
     setIsUploading(false);
-
-    // Clear upload state from sessionStorage
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.removeItem('homeUploadState');
-    }
   };
 
   return (
@@ -390,7 +419,9 @@ export default function Home() {
             onClick={handleGeneratePath}
             disabled={!selectedFile || isUploading}
             className={`px-8 py-4 rounded-lg font-semibold text-lg transition-all duration-200 flex items-center ${
-              selectedFile && !isUploading
+              isUploading
+                ? "bg-blue-600 text-white cursor-wait"
+                : selectedFile
                 ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                 : "bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
             }`}

@@ -390,12 +390,7 @@ export default function StudyPath() {
                         {topic.subtopics.map((subtopic) => (
                           <label
                             key={subtopic.id}
-                            // Apply a disabled style if the topic is not active
-                            className={`flex items-center space-x-3 p-3 rounded-lg cursor-pointer transition-colors ${
-                                isTopicActive
-                                    ? "hover:bg-gray-50 dark:hover:bg-gray-700/50"
-                                    : "opacity-60 cursor-default"
-                            }`}
+                            className="flex items-center space-x-3 p-3 rounded-lg cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50"
                           >
                             <input
                               type="checkbox"
@@ -403,8 +398,6 @@ export default function StudyPath() {
                               onChange={() =>
                                 toggleSubtopic(topic.id, subtopic.id)
                               }
-                              // 🛑 FIX: Disabled the checkbox if the topic is pending 🛑
-                              disabled={!isTopicActive} 
                               className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
                             />
                             <span
@@ -416,8 +409,7 @@ export default function StudyPath() {
                             >
                               {subtopic.title}
                             </span>
-                            {/* Disable the Study button too */}
-                            {(!subtopic.completed && isTopicActive) && (
+                            {!subtopic.completed && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
